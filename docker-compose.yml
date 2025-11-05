@@ -1,0 +1,29 @@
+version: '3.8'
+
+services:
+  lkml-bot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: lkml-bot
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      # Discord Bot Token（必需）
+      - DISCORD_BOTS=[{"token": "YOUR_BOT_TOKEN", "intent": {"guild_messages": true, "direct_messages": true}}]
+      # Discord Webhook URL（用于发送通知消息）
+      - LKML_DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/...
+      # 数据库连接 URL（使用挂载的数据目录）
+      - LKML_DATABASE_URL=sqlite+aiosqlite:///./data/lkml_bot.db
+      # 可选配置
+      - LKML_MANUAL_SUBSYSTEMS=
+      - LKML_MAX_NEWS_COUNT=20
+      - LKML_MONITORING_INTERVAL=300
+    volumes:
+      # 持久化数据库文件
+      - ./data:/app/data
+    # 如果需要从 .env 文件加载环境变量，取消下面的注释
+    # env_file:
+    #   - .env
+
