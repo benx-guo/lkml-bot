@@ -6,6 +6,7 @@ import uuid
 from typing import Awaitable, Callable, Optional
 
 import logging
+
 logger = logging.getLogger(__name__)
 
 from .config import get_config
@@ -20,17 +21,27 @@ class LKMLScheduler:  # pylint: disable=too-many-instance-attributes
         message_sender: Optional[
             Callable[[str, SubsystemUpdate], Awaitable[None]]
         ] = None,
+        cleanup_callback: Optional[Callable[[], Awaitable[None]]] = None,
+        card_builder_callback: Optional[Callable[[], Awaitable[None]]] = None,
     ):
         """初始化调度器
 
         Args:
             message_sender: 消息发送回调函数，接收 (subsystem, update_data) 参数
+            cleanup_callback: 清理任务回调函数
+            card_builder_callback: 卡片构建器回调函数
         """
         self.message_sender = message_sender
+        self.cleanup_callback = cleanup_callback
+        self.card_builder_callback = card_builder_callback
         self.is_running = False
         self.task = None
+        self.cleanup_task = None
+        self.card_builder_task = None
         self.run_id: Optional[str] = None
         self.cycle_index: int = 0
+        self.cleanup_cycle_index: int = 0
+        self.card_builder_cycle_index: int = 0
 
     async def send_feed_updates(self, monitoring_result: MonitoringResult) -> None:
         """发送feed更新到各个平台"""
@@ -102,6 +113,74 @@ class LKMLScheduler:  # pylint: disable=too-many-instance-attributes
                 # 出错时等待1分钟后重试
                 await asyncio.sleep(60)
 
+    async def cleanup_task_loop(self) -> None:
+        """清理任务主循环"""
+        logger.info(f"Starting cleanup task [run_id={self.run_id}]")
+
+        while self.is_running:
+            try:
+                self.cleanup_cycle_index += 1
+                logger.info(
+                    f"[run_id={self.run_id} cleanup_cycle={self.cleanup_cycle_index}] "
+                    "Running cleanup task..."
+                )
+
+                if self.cleanup_callback:
+                    await self.cleanup_callback()
+                else:
+                    logger.debug("No cleanup callback configured")
+
+                # 等待下次清理（使用配置的清理间隔）
+                config = get_config()
+                # 如果配置中有清理间隔，使用它，否则默认60分钟
+                cleanup_interval = (
+                    getattr(config, "thread_cleanup_interval_minutes", 60) * 60
+                )  # 转换为秒
+                logger.info(
+                    f"[run_id={self.run_id} cleanup_cycle={self.cleanup_cycle_index}] "
+                    f"Waiting {cleanup_interval}s until next cleanup"
+                )
+                await asyncio.sleep(cleanup_interval)
+
+            except (RuntimeError, ValueError, AttributeError) as e:
+                logger.error(f"Error in cleanup task: {e}", exc_info=True)
+                # 出错时等待10分钟后重试
+                await asyncio.sleep(600)
+
+    async def card_builder_task_loop(self) -> None:
+        """卡片构建任务主循环"""
+        logger.info(f"Starting card builder task [run_id={self.run_id}]")
+
+        while self.is_running:
+            try:
+                self.card_builder_cycle_index += 1
+                logger.info(
+                    f"[run_id={self.run_id} card_builder_cycle={self.card_builder_cycle_index}] "
+                    "Running card builder task..."
+                )
+
+                if self.card_builder_callback:
+                    await self.card_builder_callback()
+                else:
+                    logger.debug("No card builder callback configured")
+
+                # 等待下次构建（使用配置的构建间隔）
+                config = get_config()
+                # 如果配置中有构建间隔，使用它，否则默认5分钟
+                builder_interval = (
+                    getattr(config, "card_builder_interval_minutes", 5) * 60
+                )  # 转换为秒
+                logger.info(
+                    f"[run_id={self.run_id} card_builder_cycle={self.card_builder_cycle_index}] "
+                    f"Waiting {builder_interval}s until next build"
+                )
+                await asyncio.sleep(builder_interval)
+
+            except (RuntimeError, ValueError, AttributeError) as e:
+                logger.error(f"Error in card builder task: {e}", exc_info=True)
+                # 出错时等待5分钟后重试
+                await asyncio.sleep(300)
+
     async def start(self) -> None:
         """启动定时任务"""
         if self.is_running:
@@ -126,8 +205,32 @@ class LKMLScheduler:  # pylint: disable=too-many-instance-attributes
         self.is_running = True
         self.run_id = uuid.uuid4().hex[:8]
         self.cycle_index = 0
+        self.cleanup_cycle_index = 0
+        self.card_builder_cycle_index = 0
+
+        # 启动监控任务
         self.task = asyncio.create_task(self.monitoring_task())
-        logger.info(f"LKML scheduler started [run_id={self.run_id}]")
+
+        # 启动清理任务（如果有清理回调）
+        if self.cleanup_callback:
+            self.cleanup_task = asyncio.create_task(self.cleanup_task_loop())
+
+        # 启动卡片构建任务（如果有卡片构建回调）
+        if self.card_builder_callback:
+            self.card_builder_task = asyncio.create_task(self.card_builder_task_loop())
+
+        tasks_info = []
+        if self.cleanup_callback:
+            tasks_info.append("cleanup")
+        if self.card_builder_callback:
+            tasks_info.append("card_builder")
+
+        if tasks_info:
+            logger.info(
+                f"LKML scheduler started with tasks: {', '.join(tasks_info)} [run_id={self.run_id}]"
+            )
+        else:
+            logger.info(f"LKML scheduler started [run_id={self.run_id}]")
 
     async def stop(self) -> None:
         """停止定时任务"""
@@ -136,10 +239,28 @@ class LKMLScheduler:  # pylint: disable=too-many-instance-attributes
             return
 
         self.is_running = False
+
+        # 停止监控任务
         if self.task:
             self.task.cancel()
             try:
                 await self.task
+            except asyncio.CancelledError:
+                pass
+
+        # 停止清理任务
+        if self.cleanup_task:
+            self.cleanup_task.cancel()
+            try:
+                await self.cleanup_task
+            except asyncio.CancelledError:
+                pass
+
+        # 停止卡片构建任务
+        if self.card_builder_task:
+            self.card_builder_task.cancel()
+            try:
+                await self.card_builder_task
             except asyncio.CancelledError:
                 pass
 

@@ -5,7 +5,7 @@ from nonebot.rule import to_me
 from nonebot.adapters import Message
 from nonebot.params import EventMessage
 
-from ..shared import COMMAND_REGISTRY, BASE_HELP_HEADER, register_command
+from ..shared import COMMAND_REGISTRY, get_base_help_header, register_command
 
 # 只有当消息 @ 到机器人，且纯文本以 "/help" 开头时才回复
 # 优先级设为 40，block=False 确保如果匹配失败不会阻止其他命令
@@ -19,7 +19,7 @@ async def handle_help(message: Message = EventMessage()):
     if not text.startswith("/help"):
         return  # 不是 help 命令，不处理，让其他命令处理
 
-    lines = ["🤖 **LKML Bot 帮助**", "", BASE_HELP_HEADER.rstrip(), ""]
+    lines = ["🤖 **LKML Bot 帮助**", "", get_base_help_header().rstrip(), ""]
 
     if not COMMAND_REGISTRY:
         lines.append("目前没有可用命令。")
