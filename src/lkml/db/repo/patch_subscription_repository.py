@@ -22,8 +22,8 @@ class PatchSubscriptionData:
 
     message_id: str
     subsystem_name: str
-    discord_message_id: str
-    discord_channel_id: str
+    platform_message_id: str
+    platform_channel_id: str
     subject: str
     author: str
     url: Optional[str] = None
@@ -52,8 +52,8 @@ class PatchSubscriptionRepository:  # pylint: disable=too-many-instance-attribut
         patch_sub = PatchSubscription(
             message_id=data.message_id,
             subsystem_name=data.subsystem_name,
-            discord_message_id=data.discord_message_id,
-            discord_channel_id=data.discord_channel_id,
+            platform_message_id=data.platform_message_id,
+            platform_channel_id=data.platform_channel_id,
             subject=data.subject,
             author=data.author,
             url=data.url,
@@ -85,21 +85,21 @@ class PatchSubscriptionRepository:  # pylint: disable=too-many-instance-attribut
         )
         return result.scalar_one_or_none()
 
-    async def find_by_discord_message_id(
-        self, session: AsyncSession, discord_message_id: str
+    async def find_by_platform_message_id(
+        self, session: AsyncSession, platform_message_id: str
     ) -> Optional[PatchSubscription]:
-        """根据 Discord 消息 ID 查找 PATCH 订阅
+        """根据平台消息 ID 查找 PATCH 订阅
 
         Args:
             session: 数据库会话
-            discord_message_id: Discord 卡片消息 ID
+            platform_message_id: 平台卡片消息 ID
 
         Returns:
             PATCH 订阅对象，如果不存在则返回 None
         """
         result = await session.execute(
             select(PatchSubscription).where(
-                PatchSubscription.discord_message_id == discord_message_id
+                PatchSubscription.platform_message_id == platform_message_id
             )
         )
         return result.scalar_one_or_none()
@@ -177,10 +177,10 @@ class PatchSubscriptionRepository:  # pylint: disable=too-many-instance-attribut
     async def find_series_card(
         self, session: AsyncSession, series_message_id: str
     ) -> Optional[PatchSubscription]:
-        """查找系列的汇总卡片（已发送 Discord 消息的）
+        """查找系列的汇总卡片（已发送平台消息的）
 
-        查找第一个有 discord_message_id 的 PATCH 记录。
-        这确保我们总是更新同一张 Discord 卡片。
+        查找第一个有 platform_message_id 的 PATCH 记录。
+        这确保我们总是更新同一张平台卡片。
 
         Args:
             session: 数据库会话
@@ -189,13 +189,13 @@ class PatchSubscriptionRepository:  # pylint: disable=too-many-instance-attribut
         Returns:
             系列汇总卡片，如果不存在则返回 None
         """
-        # 查找第一个有 discord_message_id 的记录（按创建时间排序）
+        # 查找第一个有 platform_message_id 的记录（按创建时间排序）
         result = await session.execute(
             select(PatchSubscription)
             .where(
                 PatchSubscription.series_message_id == series_message_id,
-                PatchSubscription.discord_message_id != "",
-                PatchSubscription.discord_message_id.isnot(None),
+                PatchSubscription.platform_message_id != "",
+                PatchSubscription.platform_message_id.isnot(None),
             )
             .order_by(PatchSubscription.created_at)
             .limit(1)

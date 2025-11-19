@@ -117,7 +117,12 @@ class LKMLDatabase(Database):  # pylint: disable=too-few-public-methods
         if not self._tables_created:
             self._init_engine()
             async with self._engine.begin() as conn:
-                await conn.run_sync(self.base.metadata.create_all)
+                # 使用 checkfirst=True 检查表是否存在，避免重复创建
+                await conn.run_sync(
+                    lambda sync_conn: self.base.metadata.create_all(
+                        sync_conn, checkfirst=True
+                    )
+                )
             self._tables_created = True
 
     @asynccontextmanager

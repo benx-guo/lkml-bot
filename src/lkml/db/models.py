@@ -94,10 +94,10 @@ class PatchSubscription(Base):  # pylint: disable=too-few-public-methods
         String(500), unique=True, nullable=False, index=True
     )  # PATCH 的 message_id_header
     subsystem_name = Column(String(100), nullable=False, index=True)
-    discord_message_id = Column(
+    platform_message_id = Column(
         String(100), nullable=False, index=True
-    )  # Discord 卡片消息 ID
-    discord_channel_id = Column(String(100), nullable=False)  # Discord 频道 ID
+    )  # 平台卡片消息 ID
+    platform_channel_id = Column(String(100), nullable=False)  # 平台频道 ID
     subject = Column(String(500), nullable=False)  # PATCH 主题
     author = Column(String(200), nullable=False)  # PATCH 作者
     url = Column(String(1000), nullable=True)  # PATCH 链接
@@ -115,18 +115,19 @@ class PatchSubscription(Base):  # pylint: disable=too-few-public-methods
     expires_at = Column(DateTime, nullable=False, index=True)  # 过期时间（24小时后）
 
     # 关系
-    discord_thread = relationship(
-        "DiscordThread", back_populates="patch_subscription", uselist=False
+    patch_thread = relationship(
+        "PatchThread", back_populates="patch_subscription", uselist=False
     )
 
 
-class DiscordThread(Base):  # pylint: disable=too-few-public-methods
-    """Discord Thread 模型
+class PatchThread(Base):  # pylint: disable=too-few-public-methods
+    """PATCH Thread 模型
 
-    存储 Discord Thread 的信息，用于将 REPLY 消息发送到对应的 Thread。
+    存储 PATCH 对应的 Thread 信息，用于将 REPLY 消息发送到对应的 Thread。
+    这是平台无关的模型，可以用于任何支持 Thread 功能的平台。
     """
 
-    __tablename__ = "discord_threads"
+    __tablename__ = "patch_threads"
 
     id = Column(Integer, primary_key=True, index=True)
     patch_subscription_id = Column(
@@ -142,5 +143,5 @@ class DiscordThread(Base):  # pylint: disable=too-few-public-methods
 
     # 关系
     patch_subscription = relationship(
-        "PatchSubscription", back_populates="discord_thread"
+        "PatchSubscription", back_populates="patch_thread"
     )
