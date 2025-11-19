@@ -25,8 +25,8 @@ COPY README.md ./
 COPY LICENSE ./
 
 # 安装 Python 运行时依赖（从 pyproject.toml）
-# 先安装 httpx 以确保版本兼容性（nonebot2 需要 httpx<0.24.0）
-RUN pip install --no-cache-dir "httpx>=0.23.0,<0.24.0" && \
+# 先安装 httpx 以确保版本兼容性（nonebot2 2.0+ 需要 httpx>=0.24.0 以支持 proxy 参数）
+RUN pip install --no-cache-dir "httpx>=0.24.0" && \
     pip install --no-cache-dir -e .
 
 # 复制应用入口文件
