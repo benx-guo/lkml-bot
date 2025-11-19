@@ -3,15 +3,17 @@
 负责 PATCH 订阅的数据库操作。
 """
 
+import logging
 from datetime import datetime
 from typing import Optional, List
 from dataclasses import dataclass
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, delete
-from nonebot.log import logger
 
 from ..models import PatchSubscription
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass

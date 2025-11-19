@@ -5,13 +5,14 @@ import time
 import uuid
 from typing import Awaitable, Callable, Optional
 
-from nonebot.log import logger
+import logging
+logger = logging.getLogger(__name__)
 
 from .config import get_config
 from .feed.types import MonitoringResult, SubsystemUpdate
 
 
-class LKMLScheduler:
+class LKMLScheduler:  # pylint: disable=too-many-instance-attributes
     """LKML 定时任务调度器"""
 
     def __init__(

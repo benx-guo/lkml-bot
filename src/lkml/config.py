@@ -1,8 +1,11 @@
 """配置模块（配置接口和实现）"""
 
+import logging
 from typing import List, Optional, Protocol, Callable
-from nonebot.log import logger
+
 from pydantic import BaseModel
+
+logger = logging.getLogger(__name__)
 
 __all__ = ["Config", "LKMLConfig", "set_config", "get_config"]
 
@@ -150,7 +153,7 @@ class LKMLConfig(BaseModel):
                 if result is not None:
                     vger_subsystems = result if isinstance(result, list) else []
             except (TypeError, ValueError, AttributeError) as e:
-                logger.warning(f"Failed to get vger subsystems: {e}")
+                logger.warning("Failed to get vger subsystems: %s", e)
 
         # 确保 manual_subsystems 不为 None
         manual_subsystems = (

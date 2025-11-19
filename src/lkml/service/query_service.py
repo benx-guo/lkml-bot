@@ -5,7 +5,9 @@ from __future__ import annotations
 from typing import Optional
 
 from sqlalchemy import select
-from nonebot.log import logger
+import logging
+
+logger = logging.getLogger(__name__)
 
 from ..config import get_config
 from ..db.database import get_database
