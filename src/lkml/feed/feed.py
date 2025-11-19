@@ -13,6 +13,7 @@ from urllib.parse import urlparse
 import feedparser
 from feedparser.util import FeedParserDict
 import logging
+
 logger = logging.getLogger(__name__)
 
 from ..config import get_config
@@ -244,15 +245,37 @@ class FeedProcessor:
         return None
 
     def _extract_in_reply_to_header(self, entry: FeedParserDict) -> Optional[str]:
-        """从条目中提取 in_reply_to_header"""
+        """从条目中提取 in_reply_to_header
+
+        从 thr:in-reply-to 的 href 属性提取父邮件的 URL，
+        然后解析出真正的 Message-ID。
+        """
         try:
             thr = entry.get("thr_in-reply-to") or entry.get("thr:in-reply-to")
             if isinstance(thr, dict):
+                # 优先从 href 提取（包含真正的邮件 URL）
+                href = thr.get("href")
+                if isinstance(href, str) and href:
+                    # 从 URL 中提取 Message-ID
+                    # 例如: https://lore.kernel.org/rust-for-linux/msg-id@domain.com/
+                    parsed_url = urlparse(href)
+                    path = parsed_url.path.strip("/")
+                    if path:
+                        parts = path.split("/")
+                        if len(parts) >= 2:
+                            return parts[-1]  # 返回 msg-id@domain.com
+
+                # 如果 href 不存在或提取失败，尝试使用 ref（可能是 UUID）
                 ref = thr.get("ref")
                 if isinstance(ref, str):
+                    # 如果是 UUID 格式，记录警告
+                    if ref.startswith("urn:uuid:"):
+                        logger.debug(
+                            f"In-Reply-To is UUID format: {ref}, may not work correctly"
+                        )
                     return ref
-        except (AttributeError, TypeError):
-            pass
+        except (AttributeError, TypeError, ValueError) as e:
+            logger.debug(f"Failed to extract in_reply_to_header: {e}")
         return None
 
     async def save_email_message(
@@ -308,6 +331,13 @@ class FeedProcessor:
             is_reply=is_reply,
             is_patch=is_patch,
         )
+
+        # 构建元数据
+        metadata = FeedEntryMetadata(
+            message_id=email_message.message_id_header,
+            in_reply_to=email_message.in_reply_to_header,
+        )
+
         return FeedEntry(
             id=email_message.id,
             subject=entry.title,
@@ -315,6 +345,7 @@ class FeedProcessor:
             email=self.extract_email_from_author(entry.author),
             url=entry.link,
             content=content,
+            metadata=metadata,
         )
 
     async def _process_entries(

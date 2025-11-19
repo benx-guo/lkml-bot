@@ -16,7 +16,8 @@ class FeedEntryMetadata:
     sender_email: Optional[str] = None
     content: Optional[str] = None
     link: Optional[str] = None
-    message_id: Optional[str] = None
+    message_id: Optional[str] = None  # Message-ID 头部
+    in_reply_to: Optional[str] = None  # In-Reply-To 头部
 
 
 @dataclass
