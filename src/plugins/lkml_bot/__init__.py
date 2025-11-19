@@ -37,7 +37,7 @@ if str(src_path) not in sys.path:
 # 注意：这些导入在 sys.path 修改之后，是必要的，因此使用 pylint 注释禁用相关警告
 # 第一方导入（必须在本地导入之前）
 # pylint: disable=wrong-import-position
-from lkml.config import set_config  # noqa: E402
+from lkml.config import set_config, get_config as get_lkml_config  # noqa: E402
 from lkml.db import set_database, LKMLDatabase, Base  # noqa: E402
 from lkml.feed.feed import FeedProcessor  # noqa: E402
 from lkml.feed.feed_monitor import LKMLFeedMonitor  # noqa: E402
@@ -46,7 +46,11 @@ from lkml.scheduler import LKMLScheduler  # noqa: E402
 
 # 本地导入
 from .config import get_config  # noqa: E402
-from .message_sender import MessageSender  # noqa: E402
+from .message_sender import get_message_sender  # noqa: E402
+from .cleanup_service import get_cleanup_service  # noqa: E402
+from .card_builder_service_sync import get_sync_card_builder_service  # noqa: E402
+from .thread import DiscordThreadManager  # noqa: E402
+from .shared import set_database as set_plugin_database  # noqa: E402
 
 # pylint: enable=wrong-import-position
 
@@ -57,6 +61,7 @@ database = LKMLDatabase(plugin_config.database_url, Base)
 # 设置基础设施（PluginConfig 已经实现了 Config 接口）
 set_config(plugin_config)
 set_database(database)
+set_plugin_database(database)  # 也在插件层设置数据库
 
 # 3) 注册子系统来源（数据来源由实现决定）
 try:
@@ -65,7 +70,17 @@ except (AttributeError, ValueError) as e:
     logger.warning(f"Failed to register vger subsystems getter: {e}")
 
 # 4) 创建监控与调度实例（使用适配器的消息发送器）
-message_sender = MessageSender()
+message_sender = get_message_sender(database=database)
+
+# 创建清理服务
+cleanup_service = get_cleanup_service(database=database)
+
+# 创建卡片构建服务（使用同步版本避免 greenlet 问题）
+thread_manager = DiscordThreadManager(database=database)
+lkml_config = get_lkml_config()
+card_builder_service = get_sync_card_builder_service(
+    database_url=lkml_config.database_url, thread_manager=thread_manager
+)
 
 
 async def send_update_callback(subsystem: str, update_data):
@@ -73,10 +88,27 @@ async def send_update_callback(subsystem: str, update_data):
     await message_sender.send_subsystem_update(subsystem, update_data)
 
 
+async def cleanup_callback():
+    """清理任务回调"""
+    await cleanup_service.cleanup_expired_subscriptions()
+
+
+async def card_builder_callback():
+    """卡片构建任务回调（使用 asyncio.to_thread 运行同步代码）"""
+    # 在独立线程中运行同步的卡片构建
+    import asyncio  # noqa: C0415  # pylint: disable=import-outside-toplevel
+
+    await asyncio.to_thread(card_builder_service.build_cards_from_emails)
+
+
 # 使用依赖注入创建监控器与调度器
 processor = FeedProcessor(database=database)
 monitor = LKMLFeedMonitor(config=plugin_config, processor=processor, database=database)
-scheduler = LKMLScheduler(message_sender=send_update_callback)
+scheduler = LKMLScheduler(
+    message_sender=send_update_callback,
+    cleanup_callback=cleanup_callback,
+    card_builder_callback=card_builder_callback,
+)
 scheduler.monitor = monitor
 
 # 将调度器注册到 lkml 层
@@ -95,6 +127,14 @@ from .commands import unsubscribe  # noqa: F401, E402
 from .commands import start_monitor  # noqa: F401, E402
 from .commands import stop_monitor  # noqa: F401, E402
 from .commands import run_monitor  # noqa: F401, E402
+from .commands import subscribe_patch  # noqa: F401, E402
+
+# 重建卡片功能已移除
+# from .commands import rebuild_thread  # noqa: F401, E402
+# from .commands import rebuild_series  # noqa: F401, E402
+
+# 导入交互端点（注册 FastAPI 路由）- 保留以备将来使用
+# interaction_endpoint 已删除（改用命令订阅模式）
 
 # pylint: enable=wrong-import-position
 
