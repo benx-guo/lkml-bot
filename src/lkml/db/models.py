@@ -79,3 +79,68 @@ class OperationLog(Base):  # pylint: disable=too-few-public-methods
     subsystem_name = Column(String(100), nullable=True)
     details = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+
+
+class PatchSubscription(Base):  # pylint: disable=too-few-public-methods
+    """PATCH 订阅卡片模型
+
+    存储 PATCH 邮件的订阅卡片信息，用于跟踪哪些 PATCH 有人订阅。
+    """
+
+    __tablename__ = "patch_subscriptions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    message_id = Column(
+        String(500), unique=True, nullable=False, index=True
+    )  # PATCH 的 message_id_header
+    subsystem_name = Column(String(100), nullable=False, index=True)
+    discord_message_id = Column(
+        String(100), nullable=False, index=True
+    )  # Discord 卡片消息 ID
+    discord_channel_id = Column(String(100), nullable=False)  # Discord 频道 ID
+    subject = Column(String(500), nullable=False)  # PATCH 主题
+    author = Column(String(200), nullable=False)  # PATCH 作者
+    url = Column(String(1000), nullable=True)  # PATCH 链接
+    is_subscribed = Column(Boolean, default=False, nullable=False)  # 是否有人订阅
+
+    # PATCH 系列信息
+    series_message_id = Column(
+        String(500), nullable=True, index=True
+    )  # 系列 PATCH 的根 message_id（通常是 0/n 的 message_id）
+    patch_version = Column(String(20), nullable=True)  # PATCH 版本（如 v5）
+    patch_index = Column(Integer, nullable=True)  # PATCH 序号（如 1/4 中的 1）
+    patch_total = Column(Integer, nullable=True)  # PATCH 总数（如 1/4 中的 4）
+
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    expires_at = Column(DateTime, nullable=False, index=True)  # 过期时间（24小时后）
+
+    # 关系
+    discord_thread = relationship(
+        "DiscordThread", back_populates="patch_subscription", uselist=False
+    )
+
+
+class DiscordThread(Base):  # pylint: disable=too-few-public-methods
+    """Discord Thread 模型
+
+    存储 Discord Thread 的信息，用于将 REPLY 消息发送到对应的 Thread。
+    """
+
+    __tablename__ = "discord_threads"
+
+    id = Column(Integer, primary_key=True, index=True)
+    patch_subscription_id = Column(
+        Integer, ForeignKey("patch_subscriptions.id"), nullable=False, unique=True
+    )
+    thread_id = Column(
+        String(100), unique=True, nullable=False, index=True
+    )  # Discord Thread ID
+    thread_name = Column(String(500), nullable=False)  # Thread 名称
+    is_active = Column(Boolean, default=True, nullable=False)  # Thread 是否活跃
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    archived_at = Column(DateTime, nullable=True)  # Thread 归档时间
+
+    # 关系
+    patch_subscription = relationship(
+        "PatchSubscription", back_populates="discord_thread"
+    )
