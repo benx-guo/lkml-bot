@@ -27,6 +27,7 @@ class Subsystem(Base):  # pylint: disable=too-few-public-methods
 
     # 关系
     email_messages = relationship("EmailMessage", back_populates="subsystem")
+    feed_messages = relationship("FeedMessage", back_populates="subsystem")
 
 
 class EmailMessage(Base):  # pylint: disable=too-few-public-methods
@@ -58,6 +59,72 @@ class EmailMessage(Base):  # pylint: disable=too-few-public-methods
     subsystem = relationship("Subsystem", back_populates="email_messages")
 
 
+class FeedMessage(Base):  # pylint: disable=too-few-public-methods
+    """Feed 消息模型
+
+    存储邮件消息的分类信息和 PATCH 信息，用于快速查询和过滤。
+    通过 message_id_header 关联到 EmailMessage。
+    """
+
+    __tablename__ = "feed_messages"
+
+    id = Column(Integer, primary_key=True, index=True)
+    subsystem_id = Column(
+        Integer, ForeignKey("subsystems.id"), nullable=False, index=True
+    )
+    message_id = Column(
+        String(500), unique=True, nullable=True, index=True
+    )  # 消息唯一标识（兼容 EmailMessage）
+    message_id_header = Column(
+        String(500), nullable=False, unique=True, index=True
+    )  # Message-ID Header，用于快速查找
+    in_reply_to_header = Column(
+        String(500), nullable=True, index=True
+    )  # In-Reply-To 头部
+
+    # 邮件基本信息（从 feed 中提取）
+    subject = Column(String(500), nullable=False, index=True)  # 邮件主题
+    author = Column(String(200), nullable=False)  # 作者
+    author_email = Column(String(200), nullable=False)  # 作者邮箱
+    content = Column(Text, nullable=True)  # 邮件内容
+    url = Column(String(1000), nullable=True)  # 消息链接
+    received_at = Column(
+        DateTime, default=datetime.utcnow, nullable=False, index=True
+    )  # 接收时间
+
+    # 消息类型标识（标准化存储，避免后续分析）
+    is_patch = Column(
+        Boolean, default=False, nullable=False, index=True
+    )  # 是否是 PATCH
+    is_reply = Column(
+        Boolean, default=False, nullable=False, index=True
+    )  # 是否是 REPLY
+    is_series_patch = Column(Boolean, default=False, nullable=False)  # 是否是系列 PATCH
+
+    # PATCH 信息（如果是 PATCH，标准化存储）
+    patch_version = Column(String(20), nullable=True)  # PATCH 版本（如 v5）
+    patch_index = Column(
+        Integer, nullable=True, default=0
+    )  # PATCH 序号（如 1/4 中的 1），默认 0
+    patch_total = Column(
+        Integer, nullable=True, default=0
+    )  # PATCH 总数（如 1/4 中的 4），默认 0
+    is_cover_letter = Column(
+        Boolean, default=False, nullable=False
+    )  # 是否是 Cover Letter (0/n)
+
+    # 系列 PATCH 的根 message_id（用于关联系列中的 PATCH）
+    series_message_id = Column(String(500), nullable=True, index=True)
+
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+    )
+
+    # 关系
+    subsystem = relationship("Subsystem", back_populates="feed_messages")
+
+
 class OperationLog(Base):  # pylint: disable=too-few-public-methods
     """操作日志模型
 
@@ -79,3 +146,71 @@ class OperationLog(Base):  # pylint: disable=too-few-public-methods
     subsystem_name = Column(String(100), nullable=True)
     details = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+
+
+class PatchCard(Base):  # pylint: disable=too-few-public-methods
+    """PATCH 卡片模型
+
+    存储 PATCH 邮件的卡片信息，用于跟踪哪些 PATCH 已建立 Thread。
+    """
+
+    __tablename__ = "patch_cards"
+
+    id = Column(Integer, primary_key=True, index=True)
+    message_id_header = Column(
+        String(500), unique=True, nullable=False, index=True
+    )  # PATCH 的 message_id_header
+    subsystem_name = Column(String(100), nullable=False, index=True)
+    platform_message_id = Column(
+        String(100), nullable=False, index=True
+    )  # 平台卡片消息 ID
+    platform_channel_id = Column(String(100), nullable=False)  # 平台频道 ID
+    subject = Column(String(500), nullable=False)  # PATCH 主题
+    author = Column(String(200), nullable=False)  # PATCH 作者
+    url = Column(String(1000), nullable=True)  # PATCH 链接
+    has_thread = Column(Boolean, default=False, nullable=False)  # 是否已建立 Thread
+
+    # PATCH 系列信息
+    is_series_patch = Column(Boolean, default=False, nullable=False)  # 是否是系列 PATCH
+    series_message_id = Column(
+        String(500), nullable=True, index=True
+    )  # 系列 PATCH 的根 message_id（通常是 0/n 的 message_id）
+    patch_version = Column(String(20), nullable=True)  # PATCH 版本（如 v5）
+    patch_index = Column(Integer, nullable=True, default=0)  # PATCH 序号（如 1/4 中的 1），默认 0
+    patch_total = Column(Integer, nullable=True, default=0)  # PATCH 总数（如 1/4 中的 4），默认 0
+
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    expires_at = Column(DateTime, nullable=False, index=True)  # 过期时间（24小时后）
+
+    # 关系
+    patch_thread = relationship(
+        "PatchThread", back_populates="patch_card", uselist=False
+    )
+
+
+class PatchThread(Base):  # pylint: disable=too-few-public-methods
+    """PATCH Thread 模型
+
+    存储 PATCH 对应的 Thread 信息，用于将 REPLY 消息发送到对应的 Thread。
+    这是平台无关的模型，可以用于任何支持 Thread 功能的平台。
+    """
+
+    __tablename__ = "patch_threads"
+
+    id = Column(Integer, primary_key=True, index=True)
+    patch_card_id = Column(
+        Integer, ForeignKey("patch_cards.id"), nullable=False, unique=True
+    )
+    thread_id = Column(
+        String(100), unique=True, nullable=False, index=True
+    )  # Discord Thread ID
+    thread_name = Column(String(500), nullable=False)  # Thread 名称
+    is_active = Column(Boolean, default=True, nullable=False)  # Thread 是否活跃
+    overview_message_id = Column(
+        String(100), nullable=True, index=True
+    )  # Thread Overview 消息 ID（用于更新）
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    archived_at = Column(DateTime, nullable=True)  # Thread 归档时间
+
+    # 关系
+    patch_card = relationship("PatchCard", back_populates="patch_thread")

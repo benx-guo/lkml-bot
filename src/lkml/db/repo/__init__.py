@@ -9,6 +9,11 @@ from .email_message_repository import (
     EmailMessageData,
     EmailMessageRepository,
 )
+from .feed_message_repository import (
+    FEED_MESSAGE_REPO,
+    FeedMessageData,
+    FeedMessageRepository,
+)
 
 # Repository 导出名称列表（避免与 db/__init__.py 中的重复定义）
 _REPO_EXPORT_NAMES = [
@@ -17,6 +22,9 @@ _REPO_EXPORT_NAMES = [
     "EmailMessageRepository",
     "EmailMessageData",
     "EMAIL_MESSAGE_REPO",
+    "FeedMessageRepository",
+    "FeedMessageData",
+    "FEED_MESSAGE_REPO",
 ]
 
 __all__ = _REPO_EXPORT_NAMES

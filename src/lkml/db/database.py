@@ -99,10 +99,20 @@ class LKMLDatabase(Database):  # pylint: disable=too-few-public-methods
     def _init_engine(self):
         """初始化数据库引擎（懒加载模式）"""
         if self._engine is None:
+            # 为 SQLite 配置连接参数以改善并发处理
+            connect_args = {}
+            if "sqlite" in self.database_url:
+                connect_args = {
+                    "timeout": 20.0,  # 等待锁的超时时间（秒）
+                    "check_same_thread": False,  # 允许在不同线程中使用
+                }
+
             self._engine = create_async_engine(
                 self.database_url,
                 echo=False,
                 future=True,
+                connect_args=connect_args if connect_args else None,
+                pool_pre_ping=True,  # 连接前检查连接是否有效
             )
             self._session_factory = async_sessionmaker(
                 self._engine, class_=AsyncSession, expire_on_commit=False
@@ -117,7 +127,12 @@ class LKMLDatabase(Database):  # pylint: disable=too-few-public-methods
         if not self._tables_created:
             self._init_engine()
             async with self._engine.begin() as conn:
-                await conn.run_sync(self.base.metadata.create_all)
+                # 使用 checkfirst=True 检查表是否存在，避免重复创建
+                await conn.run_sync(
+                    lambda sync_conn: self.base.metadata.create_all(
+                        sync_conn, checkfirst=True
+                    )
+                )
             self._tables_created = True
 
     @asynccontextmanager
