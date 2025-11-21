@@ -12,7 +12,9 @@ from urllib.parse import urlparse
 
 import feedparser
 from feedparser.util import FeedParserDict
-from nonebot.log import logger
+import logging
+
+logger = logging.getLogger(__name__)
 
 from ..config import get_config
 from ..db.models import EmailMessage, Subsystem

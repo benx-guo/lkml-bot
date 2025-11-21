@@ -5,7 +5,9 @@ from __future__ import annotations
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from nonebot.log import logger
+import logging
+
+logger = logging.getLogger(__name__)
 
 from ..config import get_config
 from ..db.database import get_database

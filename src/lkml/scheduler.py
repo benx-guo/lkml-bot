@@ -5,7 +5,9 @@ import time
 import uuid
 from typing import Awaitable, Callable, Optional
 
-from nonebot.log import logger
+import logging
+
+logger = logging.getLogger(__name__)
 
 from .config import get_config
 from .feed.types import MonitoringResult, SubsystemUpdate

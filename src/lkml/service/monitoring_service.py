@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from nonebot.log import logger
+import logging
+
+logger = logging.getLogger(__name__)
 
 from ..db.database import get_database
 from .operation_log_service import OperationParams, log_operation
