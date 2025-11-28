@@ -8,7 +8,19 @@ from typing import Optional
 from contextlib import asynccontextmanager
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 
-__all__ = ["Database", "LKMLDatabase", "set_database", "get_database"]
+# 延迟导入 Service 类以避免循环导入
+# Service 类只在 with_services 方法中使用，不会在模块级别导入
+
+__all__ = [
+    "Database",
+    "LKMLDatabase",
+    "SessionProvider",
+    "set_database",
+    "get_database",
+    "get_session_provider",
+    "get_patch_card_service",
+    "get_thread_service",
+]
 
 
 class Database(ABC):  # pylint: disable=too-few-public-methods
@@ -103,7 +115,7 @@ class LKMLDatabase(Database):  # pylint: disable=too-few-public-methods
             connect_args = {}
             if "sqlite" in self.database_url:
                 connect_args = {
-                    "timeout": 20.0,  # 等待锁的超时时间（秒）
+                    "timeout": 30.0,  # 增加等待锁的超时时间（秒）
                     "check_same_thread": False,  # 允许在不同线程中使用
                 }
 
@@ -113,6 +125,9 @@ class LKMLDatabase(Database):  # pylint: disable=too-few-public-methods
                 future=True,
                 connect_args=connect_args if connect_args else None,
                 pool_pre_ping=True,  # 连接前检查连接是否有效
+                # 设置连接池参数以减少并发冲突
+                pool_size=5,  # 连接池大小
+                max_overflow=10,  # 最大溢出连接数
             )
             self._session_factory = async_sessionmaker(
                 self._engine, class_=AsyncSession, expire_on_commit=False
@@ -148,8 +163,125 @@ class LKMLDatabase(Database):  # pylint: disable=too-few-public-methods
             try:
                 yield session
                 await session.commit()
-            except Exception:
+            except BaseException:  # 捕获所有异常（包括 KeyboardInterrupt）以进行回滚
                 await session.rollback()
                 raise
             finally:
                 await session.close()
+
+
+class SessionProvider:
+    """Session 提供者（DB 层）
+
+    负责创建 session 并注入到所有 Repository，然后创建 Service 实例。
+    Plugins 层通过此提供者获取 Service，不需要知道 session 的存在。
+    """
+
+    def __init__(self, database: Database):
+        """初始化 Session 提供者
+
+        Args:
+            database: 数据库实例
+        """
+        self.database = database
+
+    @asynccontextmanager
+    async def with_services(
+        self,
+    ):
+        """获取 Service 实例的上下文管理器
+
+        内部创建 session，创建 Repository 和 Service 实例。
+        Plugins 层使用此方法获取 Service，不需要知道 session 的存在。
+
+        Yields:
+            (patch_card_service, thread_service) 元组
+        """
+        async with self.database.get_db_session() as session:
+            # 创建 Repository 和 Service 实例（使用辅助函数以减少重复代码）
+            from ..service.helpers import create_repositories_and_services
+
+            (
+                _,
+                _,
+                _,
+                patch_card_service,
+                thread_service,
+            ) = create_repositories_and_services(session)
+
+            yield patch_card_service, thread_service
+
+    @asynccontextmanager
+    async def with_patch_card_service(self):
+        """获取 PatchCardService 实例的上下文管理器
+
+        Yields:
+            PatchCardService 实例
+        """
+        async with self.with_services() as (patch_card_service, _):
+            yield patch_card_service
+
+    @asynccontextmanager
+    async def with_thread_service(self):
+        """获取 ThreadService 实例的上下文管理器
+
+        Yields:
+            ThreadService 实例
+        """
+        async with self.with_services() as (_, thread_service):
+            yield thread_service
+
+
+# SessionProvider 单例管理器
+_session_provider: Optional[SessionProvider] = None
+
+
+def get_session_provider() -> SessionProvider:
+    """获取 SessionProvider 实例
+
+    Returns:
+        SessionProvider 实例
+
+    Raises:
+        RuntimeError: 如果数据库未初始化
+    """
+    # Global variable is necessary for singleton pattern
+    # pylint: disable=global-statement
+    global _session_provider
+    if _session_provider is None:
+        database = get_database()
+        _session_provider = SessionProvider(database)
+    return _session_provider
+
+
+# 工厂函数：供 plugins 层使用，内部管理 SessionProvider
+
+
+@asynccontextmanager
+async def get_patch_card_service():
+    """获取 PatchCardService 实例
+
+    内部使用 SessionProvider 创建 session 和 repository，然后创建 Service 实例。
+    Plugins 层不需要知道 SessionProvider 的存在。
+
+    Yields:
+        PatchCardService 实例（通过 async context manager）
+    """
+    session_provider = get_session_provider()
+    async with session_provider.with_patch_card_service() as patch_card_service:
+        yield patch_card_service
+
+
+@asynccontextmanager
+async def get_thread_service():
+    """获取 ThreadService 实例
+
+    内部使用 SessionProvider 创建 session 和 repository，然后创建 Service 实例。
+    Plugins 层不需要知道 SessionProvider 的存在。
+
+    Yields:
+        ThreadService 实例（通过 async context manager）
+    """
+    session_provider = get_session_provider()
+    async with session_provider.with_thread_service() as thread_service:
+        yield thread_service
