@@ -71,7 +71,7 @@ class ThreadOverviewRenderer:
                     f"Rendering {len(sub_patch_overviews)} patches for thread {thread_id}"
                 )
 
-                for idx, sub_overview in enumerate(sub_patch_overviews):
+                for sub_overview in sub_patch_overviews:
                     patch = sub_overview.patch
                     patch_index = patch.patch_index
                     subject = patch.subject[:60]
@@ -79,9 +79,7 @@ class ThreadOverviewRenderer:
                     # 渲染子 PATCH 消息（直接使用 service 层准备好的数据）
                     patch_content = self._render_sub_patch(sub_overview)
 
-                    # 如果不是最后一个 PATCH，添加分割线
-                    if idx < len(sub_patch_overviews) - 1:
-                        patch_content += "\n\n---\n"
+                    patch_content += "\n\n---\n"
 
                     # 发送消息
                     logger.debug(
@@ -226,6 +224,8 @@ class ThreadOverviewRenderer:
         try:
             # 直接使用 service 层准备好的数据渲染
             content = self._render_sub_patch(sub_overview)
+
+            content += "\n\n---\n"
 
             # 更新消息
             success = await update_message_in_thread(

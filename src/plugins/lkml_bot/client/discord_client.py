@@ -38,7 +38,12 @@ def truncate_description(description: str) -> str:
 
 
 async def send_discord_embed(
-    config, params: PatchCardParams, description: str, max_retries: int = 3
+    config,
+    params: PatchCardParams,
+    description: str,
+    max_retries: int = 3,
+    embed_color: Optional[int] = None,
+    title: Optional[str] = None,
 ) -> Optional[str]:
     """发送 Discord embed 消息（带 rate limit 处理）
 
@@ -47,18 +52,19 @@ async def send_discord_embed(
         params: 订阅卡片参数
         description: embed 描述
         max_retries: 遇到 429 时的最大重试次数
+        embed_color: Embed 颜色（可选，默认 Discord 蓝色）
+        title: Embed 标题（可选，默认使用 subject）
 
     Returns:
         Discord 消息 ID，失败返回 None
     """
-    # 构建标题
-    title = f"📨 {params.subject[:200]}"
-
     # 构建订阅卡片内容
     embed = {
-        "title": title,
+        "title": title if title else f"📨 {params.subject[:200]}",
         "description": description,
-        "color": 0x5865F2,  # Discord 蓝色
+        "color": (
+            embed_color if embed_color is not None else 0x5865F2
+        ),  # Discord 蓝色（默认）
     }
 
     if params.url:
@@ -70,14 +76,12 @@ async def send_discord_embed(
         "Content-Type": "application/json",
     }
 
-    url = f"https://discord.com/api/v10/channels/{config.platform_channel_id}/messages"
-
     # 重试逻辑（处理 rate limit）
     for attempt in range(max_retries):
         async with httpx.AsyncClient() as client:
             try:
                 response = await client.post(
-                    url,
+                    f"https://discord.com/api/v10/channels/{config.platform_channel_id}/messages",
                     json={"embeds": [embed]},
                     headers=headers,
                     timeout=30.0,
@@ -651,10 +655,10 @@ async def send_thread_update_notification(
         }
 
         # 使用 Thread 提及格式 <#{thread_id}>
-        thread_mention = f"<#{thread_id}>"
+        thread_mention = f"Thread: <#{thread_id}>"
 
         # 构建通知消息
-        content = f"🔄 **Thread Overview 已更新**\n\n{thread_mention}"
+        content = f"🔄 **Thread Overview 已更新**\n\n{thread_mention}\n\n"
 
         message_data = {"content": content}
 

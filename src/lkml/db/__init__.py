@@ -14,6 +14,7 @@ from .models import (
     Subsystem,
     PatchCardModel,
     PatchThreadModel,
+    PatchCardFilterModel,
 )
 
 __all__ = [
@@ -26,5 +27,6 @@ __all__ = [
     "FeedMessageModel",
     "PatchCardModel",
     "PatchThreadModel",
+    "PatchCardFilterModel",
     "OperationLog",
 ]
