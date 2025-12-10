@@ -50,6 +50,9 @@ class PatchCard:
     series_patches: Optional[List[SeriesPatchInfo]] = (
         None  # 系列 PATCH 列表（如果是系列）
     )
+    matched_filters: Optional[List[str]] = (
+        None  # 匹配的过滤规则名称列表（用于高亮显示）
+    )
 
 
 @dataclass
@@ -74,6 +77,9 @@ class FeedMessage:
     patch_total: Optional[int] = None
     is_cover_letter: bool = False
     series_message_id: Optional[str] = None
+    matched_filters: Optional[List[str]] = (
+        None  # 匹配的过滤规则名称列表（用于高亮显示）
+    )
 
 
 @dataclass

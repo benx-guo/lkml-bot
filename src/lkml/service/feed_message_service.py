@@ -90,16 +90,14 @@ class FeedMessageService:
         from ..db.database import get_patch_card_service
 
         async with get_patch_card_service() as patch_card_service:
-            existing_patch_card = await patch_card_service.find_by_message_id_header(
+            if await patch_card_service.find_by_message_id_header(
                 feed_message.message_id_header
-            )
-
-        if existing_patch_card:
-            logger.debug(
-                f"PATCH card already exists: {feed_message.message_id_header}, "
-                f"subject: {feed_message.subject[:50]}"
-            )
-            return
+            ):
+                logger.debug(
+                    f"PATCH card already exists: {feed_message.message_id_header}, "
+                    f"subject: {feed_message.subject[:50]}"
+                )
+                return
 
         # 创建新的 PATCH 卡片并发送到 Discord
         try:
@@ -113,17 +111,13 @@ class FeedMessageService:
 
             # 从分类结果中获取 PATCH 信息
             patch_info = classification.patch_info
-            series_message_id = classification.series_message_id
-
             # Series PATCH 处理：只发送 Cover Letter，子 PATCH 不单独创建卡片
-            if series_message_id and patch_info:
-                is_cover_letter = (
+            if classification.series_message_id and patch_info:
+                if not (
                     patch_info.is_cover_letter
                     or feed_message.is_cover_letter
                     or (patch_info.index is not None and patch_info.index == 0)
-                )
-
-                if not is_cover_letter:
+                ):
                     # 子 PATCH (1/n, 2/n, ...) 只保存在 feed_message 表中
                     logger.debug(
                         f"Skipping patch_card creation for series sub-PATCH: "
@@ -136,8 +130,23 @@ class FeedMessageService:
 
             # 准备 Service 层的 FeedMessage 对象
             service_feed_message = self._convert_to_service_feed_message(
-                feed_message, patch_info, series_message_id
+                feed_message, patch_info, classification.series_message_id
             )
+
+            # 应用过滤规则（在默认 filter 基础上）
+            should_create, matched_filters = await self._should_create_patch_card(
+                session, service_feed_message, patch_info
+            )
+            if not should_create:
+                logger.debug(
+                    f"Patch card creation filtered out by rules: {feed_message.message_id_header}, "
+                    f"subject: {feed_message.subject[:50]}"
+                )
+                return
+
+            # 将匹配的过滤规则名称传递给 service_feed_message（用于后续渲染）
+            if matched_filters:
+                service_feed_message.matched_filters = matched_filters
 
             # 检查 PATCH 卡片是否已存在
             async with get_patch_card_service() as service:
@@ -152,7 +161,7 @@ class FeedMessageService:
                     feed_message,
                     service_feed_message,
                     patch_info,
-                    series_message_id,
+                    classification.series_message_id,
                 )
 
             if patch_card:
@@ -273,6 +282,7 @@ class FeedMessageService:
             has_thread=False,
             is_cover_letter=service_feed_message.is_cover_letter,
             series_patches=series_patches,
+            matched_filters=service_feed_message.matched_filters,
         )
 
     async def _save_patch_card_to_database(
@@ -289,7 +299,7 @@ class FeedMessageService:
         feed_message_repo = FeedMessageRepository(session)
         patch_card_service = PatchCardService(patch_card_repo, feed_message_repo)
 
-        return await patch_card_service.create_patch_card_for_discord(
+        return await patch_card_service.create_patch_card(
             feed_message=service_feed_message,
             platform_message_id=platform_message_id,
             platform_channel_id=self.patch_card_renderer.config.platform_channel_id,
@@ -654,6 +664,42 @@ class FeedMessageService:
                 exc_info=True,
             )
             return None
+
+    async def _should_create_patch_card(
+        self,
+        session: AsyncSession,
+        service_feed_message: ServiceFeedMessage,
+        patch_info,
+    ) -> tuple[bool, list[str]]:
+        """判断是否应该创建 Patch Card（应用过滤规则）
+
+        Args:
+            session: 数据库会话
+            service_feed_message: Service 层的 FeedMessage 对象
+            patch_info: PATCH 信息
+
+        Returns:
+            (should_create, matched_filter_names) 元组
+            - should_create: True 表示应该创建，False 表示不应该创建
+            - matched_filter_names: 匹配的过滤规则名称列表
+        """
+        try:
+            from ..db.repo import PatchCardFilterRepository
+            from .patch_card_filter_service import PatchCardFilterService
+
+            filter_repo = PatchCardFilterRepository(session)
+            filter_service = PatchCardFilterService(filter_repo)
+
+            return await filter_service.should_create_patch_card(
+                service_feed_message, patch_info
+            )
+        except (RuntimeError, ValueError, AttributeError) as e:
+            logger.warning(
+                f"Failed to check filter rules, allowing creation by default: {e}",
+                exc_info=True,
+            )
+            # 如果过滤检查失败，默认允许创建（保持原有行为）
+            return (True, [])
 
     def _convert_to_service_feed_message(
         self, feed_message, patch_info, series_message_id

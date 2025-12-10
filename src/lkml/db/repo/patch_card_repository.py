@@ -124,49 +124,6 @@ class PatchCardRepository:  # pylint: disable=too-many-instance-attributes
         model = result.scalar_one_or_none()
         return self._model_to_data(model) if model else None
 
-    async def exists_by_message_id_header(self, message_id_header: str) -> bool:
-        """检查是否已存在 PATCH 订阅
-
-        Args:
-            message_id_header: PATCH 的 message_id_header
-
-        Returns:
-            True 如果存在，False 如果不存在
-        """
-        result = await self.session.execute(
-            select(PatchCardModel).where(
-                PatchCardModel.message_id_header == message_id_header
-            )
-        )
-        return result.scalar_one_or_none() is not None
-
-    async def update_platform_message_id(
-        self, message_id_header: str, platform_message_id: str
-    ) -> Optional[PatchCardData]:
-        """更新 PATCH 的 platform_message_id
-
-        Args:
-            message_id_header: PATCH 的 message_id_header
-            platform_message_id: 新的 platform_message_id
-
-        Returns:
-            更新后的 PATCH 卡片数据，如果不存在则返回 None
-        """
-        result = await self.session.execute(
-            select(PatchCardModel).where(
-                PatchCardModel.message_id_header == message_id_header
-            )
-        )
-        patch_card = result.scalar_one_or_none()
-        if patch_card:
-            patch_card.platform_message_id = platform_message_id
-            await self.session.flush()
-            logger.debug(
-                f"Updated platform_message_id for PATCH: {patch_card.message_id_header}"
-            )
-            return self._model_to_data(patch_card)
-        return None
-
     async def mark_as_has_thread(
         self, message_id_header: str
     ) -> Optional[PatchCardData]:
@@ -190,26 +147,6 @@ class PatchCardRepository:  # pylint: disable=too-many-instance-attributes
             logger.debug(f"Marked PATCH as has_thread: {patch_card.message_id_header}")
             return self._model_to_data(patch_card)
         return None
-
-    async def find_by_series_message_id(
-        self, series_message_id: str
-    ) -> Optional[PatchCardData]:
-        """根据系列 message_id 查找已建立 Thread 的 PATCH
-
-        Args:
-            series_message_id: 系列 PATCH 的根 message_id
-
-        Returns:
-            PATCH 卡片数据，如果不存在或未建立 Thread 则返回 None
-        """
-        result = await self.session.execute(
-            select(PatchCardModel).where(
-                PatchCardModel.series_message_id == series_message_id,
-                PatchCardModel.has_thread.is_(True),
-            )
-        )
-        model = result.scalar_one_or_none()
-        return self._model_to_data(model) if model else None
 
     async def find_series_patch_card(
         self, series_message_id: str

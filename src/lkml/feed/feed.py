@@ -7,16 +7,16 @@ import hashlib
 import re
 import time
 from datetime import datetime, timezone
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, TYPE_CHECKING
 from urllib.parse import urlparse
 
 import feedparser
 from feedparser.util import FeedParserDict
 import logging
+from sqlalchemy.exc import SQLAlchemyError
 
 logger = logging.getLogger(__name__)
 
-from typing import TYPE_CHECKING
 
 from ..config import get_config
 from ..db.models import Subsystem
@@ -382,26 +382,25 @@ class FeedProcessor:
         Returns:
             保存的 Feed 消息对象
         """
-        # 提取基本数据
-        email, received_at, message_id, message_id_header, in_reply_to_header = (
-            self._extract_feed_message_data(entry, subsystem)
-        )
+        # 提取基本数据（避免创建过多局部变量，使用聚合对象）
+        base_data = self._extract_feed_message_data(entry, subsystem)
 
         # 创建 Repository 实例
         feed_message_repo = FeedMessageRepository(session)
 
         # 检查是否已存在
-        if message_id_header:
+        msg_id_header = base_data[3]
+        if msg_id_header:
             existing_message_data = await feed_message_repo.find_by_message_id_header(
-                message_id_header
+                msg_id_header
             )
             if existing_message_data:
-                logger.debug(f"Feed message already exists: {message_id_header}")
+                logger.debug(f"Feed message already exists: {msg_id_header}")
                 # 即使消息已存在，也需要分类并附加 _classification，以便后续处理 REPLY
                 classification = classify_message(
                     subject=entry.title,
-                    in_reply_to_header=in_reply_to_header,
-                    message_id_header=message_id_header,
+                    in_reply_to_header=base_data[4],
+                    message_id_header=msg_id_header,
                 )
                 converted_message = self._convert_repo_to_service_feed_message(
                     existing_message_data
@@ -414,8 +413,8 @@ class FeedProcessor:
         # 使用标准化的消息分类器判断消息类型
         classification = classify_message(
             subject=entry.title,
-            in_reply_to_header=in_reply_to_header,
-            message_id_header=message_id_header,
+            in_reply_to_header=base_data[4],
+            message_id_header=msg_id_header,
         )
 
         # 调试日志：记录 Series Patch 的分类信息
@@ -431,11 +430,11 @@ class FeedProcessor:
         service_feed_message_data = self._build_service_feed_message(
             entry,
             subsystem,
-            email,
-            received_at,
-            message_id,
-            message_id_header,
-            in_reply_to_header,
+            base_data[0],
+            base_data[1],
+            base_data[2],
+            msg_id_header,
+            base_data[4],
             classification,
         )
 
@@ -443,6 +442,15 @@ class FeedProcessor:
         feed_message_data = await self._save_service_feed_message_to_repo(
             feed_message_repo, service_feed_message_data
         )
+
+        # 回复消息补齐系列 ID
+        try:
+            if feed_message_data.is_reply:
+                await self._backfill_series_message_id_chain(
+                    feed_message_repo, feed_message_data
+                )
+        except (RuntimeError, ValueError, AttributeError, SQLAlchemyError) as e:
+            logger.debug(f"Backfill series_message_id failed: {e}")
 
         # 将分类结果附加到 feed_message_data 对象（用于后续处理）
         # pylint: disable=protected-access
@@ -537,6 +545,53 @@ class FeedProcessor:
             processed_entries.append(self._create_feed_entry(feed_message))
 
         return (new_count, reply_count, processed_entries)
+
+    async def _backfill_series_message_id_chain(
+        self,
+        repo: FeedMessageRepository,
+        current: "FeedMessageData",
+    ) -> Optional[str]:
+        series_id = None
+        chain: list["FeedMessageData"] = []
+        visited: set[str] = set()
+
+        node = current
+        depth = 0
+        while node and node.in_reply_to_header and depth < 50:
+            chain.append(node)
+            visited.add(node.message_id_header)
+            parent = await repo.find_by_message_id_header(node.in_reply_to_header)
+            if not parent:
+                break
+            if parent.series_message_id:
+                series_id = parent.series_message_id
+                chain.append(parent)
+                break
+            node = parent
+            depth += 1
+
+        if not series_id:
+            root = None
+            probe = node
+            depth = 0
+            while probe and probe.in_reply_to_header and depth < 50:
+                root = probe
+                probe = await repo.find_by_message_id_header(probe.in_reply_to_header)
+                depth += 1
+            root = probe or root or current
+            if root:
+                series_id = root.series_message_id or root.message_id_header
+
+        if series_id:
+            for msg in chain:
+                if not msg.series_message_id:
+                    msg.series_message_id = series_id
+                    await repo.create_or_update(data=msg)
+            if not current.series_message_id:
+                current.series_message_id = series_id
+                await repo.create_or_update(data=current)
+            return series_id
+        return None
 
     def _update_last_update_time(self, entries: List[FeedParserDict]) -> None:
         """更新最后更新时间"""

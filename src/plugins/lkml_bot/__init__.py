@@ -121,6 +121,7 @@ from .commands import start_monitor  # noqa: F401, E402
 from .commands import stop_monitor  # noqa: F401, E402
 from .commands import run_monitor  # noqa: F401, E402
 from .commands import watch  # noqa: F401, E402
+from .commands import filter as filter_command  # noqa: F401, E402
 
 # 重建卡片功能已移除
 # from .commands import rebuild_thread  # noqa: F401, E402
@@ -138,6 +139,8 @@ __all__ = [
     "start_monitor",
     "stop_monitor",
     "run_monitor",
+    "watch",
+    "filter_command",
 ]
 
 

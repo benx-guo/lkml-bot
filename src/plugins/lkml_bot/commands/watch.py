@@ -359,7 +359,7 @@ async def _create_patch_card(feed_message, patch_info, matcher) -> Optional[Patc
         service_feed_message = _build_service_feed_message(feed_message, patch_info)
 
         async with get_patch_card_service() as service:
-            patch_card = await service.create_patch_card_for_discord(
+            patch_card = await service.create_patch_card(
                 feed_message=service_feed_message,
                 platform_message_id=platform_message_id,
                 platform_channel_id=config.platform_channel_id,

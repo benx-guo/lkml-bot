@@ -173,3 +173,35 @@ class PatchThreadModel(Base):  # pylint: disable=too-few-public-methods
     )  # 子 PATCH 消息映射 {patch_index: message_id}
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     archived_at = Column(DateTime, nullable=True)  # Thread 归档时间
+
+
+class PatchCardFilterModel(Base):  # pylint: disable=too-few-public-methods
+    """PATCH 卡片过滤规则模型
+
+    存储过滤规则，用于控制哪些 PATCH 可以创建 Patch Card。
+    过滤规则在默认 filter（单 Patch 和 Series Patch 的 Cover Letter）基础上应用。
+    """
+
+    __tablename__ = "patch_card_filters"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(100), nullable=False, unique=True, index=True)  # 规则名称
+    enabled = Column(Boolean, default=True, nullable=False, index=True)  # 是否启用
+    exclusive = Column(
+        Boolean, default=False, nullable=False, index=True
+    )  # 是否独占模式（True=只允许匹配的创建，False=所有都创建但高亮匹配的）
+
+    # 过滤条件（JSON 格式存储）
+    # 支持的字段：
+    # - author: 作者名称（字符串或列表，支持正则）
+    # - author_email: 作者邮箱（字符串或列表，支持正则）
+    # - subject_keywords: 主题关键词（列表，任意匹配）
+    # - subject_regex: 主题正则表达式（字符串）
+    filter_conditions = Column(JSON, nullable=False)  # 过滤条件
+
+    description = Column(Text, nullable=True)  # 规则描述
+    created_by = Column(String(200), nullable=True)  # 创建者
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+    )

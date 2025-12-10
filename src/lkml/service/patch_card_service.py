@@ -91,49 +91,6 @@ class PatchCardService:
             )
             return None
 
-    async def exists_by_message_id_header(self, message_id_header: str) -> bool:
-        """检查是否已存在 PATCH 卡片
-
-        Args:
-            message_id_header: PATCH message_id_header
-
-        Returns:
-            True 如果存在，False 如果不存在
-        """
-        try:
-            return await self.patch_card_repo.exists_by_message_id_header(
-                message_id_header
-            )
-        except (RuntimeError, ValueError, AttributeError) as e:
-            logger.error(
-                f"Failed to check if patch card exists by message_id_header: {e}",
-                exc_info=True,
-            )
-            return False
-
-    async def find_by_series_message_id(
-        self, series_message_id: str
-    ) -> Optional[PatchCard]:
-        """根据系列 message_id 查找 PATCH 卡片
-
-        Args:
-            series_message_id: 系列 message_id
-
-        Returns:
-            PATCH 卡片数据，如果不存在则返回 None
-        """
-        try:
-            repo_data = await self.patch_card_repo.find_by_series_message_id(
-                series_message_id
-            )
-            return self._repo_data_to_service_data(repo_data) if repo_data else None
-        except (RuntimeError, ValueError, AttributeError) as e:
-            logger.error(
-                f"Failed to find patch card by series_message_id: {e}",
-                exc_info=True,
-            )
-            return None
-
     async def find_series_patch_card(
         self, series_message_id: str
     ) -> Optional[PatchCard]:
@@ -169,27 +126,6 @@ class PatchCardService:
             return self._repo_data_to_service_data(repo_result) if repo_result else None
         except (RuntimeError, ValueError, AttributeError) as e:
             logger.error(f"Failed to create patch card: {e}", exc_info=True)
-            return None
-
-    async def update_platform_message_id(
-        self, message_id_header: str, platform_message_id: str
-    ) -> Optional[PatchCard]:
-        """更新 PATCH 的 platform_message_id
-
-        Args:
-            message_id_header: PATCH 的 message_id_header
-            platform_message_id: 新的 platform_message_id
-
-        Returns:
-            更新后的 PATCH 卡片数据，如果不存在则返回 None
-        """
-        try:
-            repo_data = await self.patch_card_repo.update_platform_message_id(
-                message_id_header, platform_message_id
-            )
-            return self._repo_data_to_service_data(repo_data) if repo_data else None
-        except (RuntimeError, ValueError, AttributeError) as e:
-            logger.error(f"Failed to update platform_message_id: {e}", exc_info=True)
             return None
 
     async def mark_as_has_thread(self, message_id_header: str) -> bool:
@@ -317,7 +253,7 @@ class PatchCardService:
         """
         return await self.feed_message_repo.find_by_message_id_header(message_id_header)
 
-    async def create_patch_card_for_discord(
+    async def create_patch_card(
         self,
         feed_message,
         platform_message_id: str,
@@ -384,7 +320,7 @@ class PatchCardService:
                 created_card.series_patches = series_patches
 
             logger.info(
-                f"Created PatchCard for Discord: {feed_message.message_id_header}, "
+                f"Created PatchCard: {feed_message.message_id_header}, "
                 f"is_series={is_series}, platform_message_id={platform_message_id}"
             )
 
@@ -393,7 +329,3 @@ class PatchCardService:
         except (RuntimeError, ValueError, AttributeError) as e:
             logger.error(f"Failed to create patch card for discord: {e}", exc_info=True)
             return None
-
-
-# 工厂函数已移至 lkml.db.database 模块以避免循环导入
-# 不再在此模块导入，直接从 lkml.db.database 或 lkml.service 导入

@@ -52,6 +52,10 @@ class PatchCardRenderer:
             # 构建描述
             description = self._build_description(patch_card)
 
+            # 构建标题（如果匹配了 filter，添加高亮标记）
+            title_prefix = "⭐ " if patch_card.matched_filters else "📨 "
+            title = f"{title_prefix}{patch_card.subject[:200]}"
+
             # 构建 Embed 数据
             from ...client import PatchCardParams
 
@@ -68,8 +72,13 @@ class PatchCardRenderer:
                 patch_total=patch_card.patch_total,
             )
 
+            # 如果匹配了 filter，使用高亮颜色（金色）
+            embed_color = 0xFFD700 if patch_card.matched_filters else 0x5865F2
+
             # 发送 Embed（纯渲染）
-            return await send_discord_embed(self.config, params, description)
+            return await send_discord_embed(
+                self.config, params, description, embed_color=embed_color, title=title
+            )
 
         except (RuntimeError, ValueError, AttributeError) as e:
             logger.error(f"Failed to render and send patch card: {e}", exc_info=True)
