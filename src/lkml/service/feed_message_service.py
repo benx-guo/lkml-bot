@@ -15,8 +15,18 @@ from typing import Optional
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..db.repo import FeedMessageData
-from .types import FeedMessage as ServiceFeedMessage, PatchCard, PatchThread
+from ..db.repo import (
+    FeedMessageData,
+    FeedMessageRepository,
+    PatchCardRepository,
+)
+from .types import (
+    FeedMessage as ServiceFeedMessage,
+    PatchCard,
+    PatchThread,
+    SeriesPatchInfo,
+)
+from .patch_card_service import PatchCardService
 
 logger = logging.getLogger(__name__)
 
@@ -29,17 +39,21 @@ class FeedMessageService:
 
     def __init__(
         self,
-        patch_card_renderer=None,
-        thread_overview_renderer=None,
+        patch_card_renderers=None,
+        thread_overview_renderers=None,
     ):
         """初始化处理器
 
         Args:
-            patch_card_renderer: PatchCard 渲染器（Plugins 层）
-            thread_overview_renderer: Thread Overview 渲染器（Plugins 层）
+            patch_card_renderers: PatchCard 渲染器集合（Plugins 层）
+            thread_overview_renderers: Thread Overview 渲染器集合（Plugins 层）
         """
-        self.patch_card_renderer = patch_card_renderer
-        self.thread_overview_renderer = thread_overview_renderer
+        self.patch_card_renderers = (
+            list(patch_card_renderers) if patch_card_renderers else []
+        )
+        self.thread_overview_renderers = (
+            list(thread_overview_renderers) if thread_overview_renderers else []
+        )
 
     # ========== 公共方法 ==========
 
@@ -102,7 +116,7 @@ class FeedMessageService:
         # 创建新的 PATCH 卡片并发送到 Discord
         try:
             # 检查渲染器是否可用
-            if not self.patch_card_renderer:
+            if not self.patch_card_renderers:
                 logger.debug(
                     f"PatchCard renderer not configured, skipping PATCH card creation: "
                     f"{feed_message.message_id_header}"
@@ -166,7 +180,7 @@ class FeedMessageService:
 
             if patch_card:
                 logger.info(
-                    f"Created PATCH card and sent to Discord: {feed_message.message_id_header}, "
+                    f"Created PATCH card and sent: {feed_message.message_id_header}, "
                     f"subject: {feed_message.subject[:50]}, "
                     f"is_series={classification.is_series_patch}, "
                     f"platform_message_id={patch_card.platform_message_id}"
@@ -191,7 +205,7 @@ class FeedMessageService:
         patch_info,
         series_message_id: Optional[str],
     ):
-        """创建并发送 PATCH 卡片到 Discord"""
+        """创建并发送 PATCH 卡片到各平台"""
         # 如果是 Cover Letter，查询数据库中已有的子 PATCH
         series_patches = await self._get_series_patches_for_cover_letter(  # pylint: disable=too-many-arguments
             session, feed_message, service_feed_message, series_message_id, patch_info
@@ -208,22 +222,39 @@ class FeedMessageService:
             )
         )
 
-        platform_message_id = await self.patch_card_renderer.render_and_send(
-            temp_patch_card
-        )
-
-        # 添加延迟以避免触发 Discord rate limit
-        await asyncio.sleep(0.2)
+        platform_message_id = None
+        platform_channel_id = ""
+        for r in self.patch_card_renderers:
+            try:
+                logger.info(
+                    f"Rendering PATCH card with renderer: {r.__class__.__name__}"
+                )
+                result = await r.render_and_send(temp_patch_card)
+                await asyncio.sleep(0.1)
+                if isinstance(result, str) and result:
+                    platform_message_id = result
+                    channel_id = getattr(
+                        getattr(r, "config", None), "platform_channel_id", ""
+                    )
+                    platform_channel_id = (
+                        str(channel_id) if channel_id is not None else ""
+                    )
+            except (RuntimeError, ValueError, AttributeError) as e:
+                logger.error(
+                    f"Failed to send PATCH card via renderer {r.__class__.__name__}: {e}",
+                    exc_info=True,
+                )
+                continue
 
         if not platform_message_id:
-            logger.error(
-                f"Failed to send PATCH card to Discord: {feed_message.message_id_header}"
+            logger.warning(
+                f"Failed to send PATCH card via any renderer requiring message id: {feed_message.message_id_header}"
             )
             return None
 
         # 保存到数据库
         return await self._save_patch_card_to_database(
-            session, service_feed_message, platform_message_id
+            session, service_feed_message, platform_message_id, platform_channel_id
         )
 
     async def _get_series_patches_for_cover_letter(  # pylint: disable=too-many-arguments
@@ -232,9 +263,6 @@ class FeedMessageService:
         """获取 Cover Letter 的子 PATCH 列表"""
         if not (service_feed_message.is_cover_letter and series_message_id):
             return []
-
-        from ..db.repo import FeedMessageRepository
-        from .types import SeriesPatchInfo
 
         feed_msg_repo = FeedMessageRepository(session)
         sub_patches = await feed_msg_repo.find_by_series_message_id(series_message_id)
@@ -269,7 +297,7 @@ class FeedMessageService:
             message_id_header=feed_message.message_id_header,
             subsystem_name=feed_message.subsystem_name,
             platform_message_id="",
-            platform_channel_id=self.patch_card_renderer.config.platform_channel_id,
+            platform_channel_id="",
             subject=feed_message.subject,
             author=feed_message.author,
             url=feed_message.url,
@@ -286,15 +314,9 @@ class FeedMessageService:
         )
 
     async def _save_patch_card_to_database(
-        self, session, service_feed_message, platform_message_id
+        self, session, service_feed_message, platform_message_id, platform_channel_id
     ):
         """保存 PATCH 卡片到数据库"""
-        from .patch_card_service import PatchCardService
-        from ..db.repo import (
-            FeedMessageRepository,
-            PatchCardRepository,
-        )
-
         patch_card_repo = PatchCardRepository(session)
         feed_message_repo = FeedMessageRepository(session)
         patch_card_service = PatchCardService(patch_card_repo, feed_message_repo)
@@ -302,7 +324,7 @@ class FeedMessageService:
         return await patch_card_service.create_patch_card(
             feed_message=service_feed_message,
             platform_message_id=platform_message_id,
-            platform_channel_id=self.patch_card_renderer.config.platform_channel_id,
+            platform_channel_id=platform_channel_id,
             timeout_hours=24,
         )
 
@@ -384,7 +406,10 @@ class FeedMessageService:
         return patch_card, thread
 
     async def _find_patch_card_for_reply(
-        self, session, patch_card_service, feed_message
+        self,
+        session: AsyncSession,
+        patch_card_service: PatchCardService,
+        feed_message: FeedMessageData,
     ):
         """查找回复对应的 PATCH 卡片
 
@@ -399,8 +424,6 @@ class FeedMessageService:
 
         # 2. 如果没找到，可能是回复子 PATCH 的情况
         if not patch_card:
-            from ..db.repo import FeedMessageRepository
-
             feed_message_repo = FeedMessageRepository(session)
             sub_patch_feed_message = await feed_message_repo.find_by_message_id_header(
                 feed_message.in_reply_to_header
@@ -408,8 +431,6 @@ class FeedMessageService:
 
             # 如果找到了子 PATCH 的 feed_message，通过它的 series_message_id 查找 Cover Letter
             if sub_patch_feed_message and sub_patch_feed_message.series_message_id:
-                # 使用 find_series_patch_card 而不是 find_by_series_message_id
-                # 因为 find_by_series_message_id 要求 has_thread=True，可能导致找不到
                 patch_card = await patch_card_service.find_series_patch_card(
                     sub_patch_feed_message.series_message_id
                 )
@@ -439,7 +460,7 @@ class FeedMessageService:
         """
         try:
             # 检查是否有可用的渲染器配置
-            if not self.thread_overview_renderer:
+            if not self.thread_overview_renderers:
                 logger.debug(
                     "Thread overview renderer not configured, skipping notification"
                 )
@@ -448,15 +469,12 @@ class FeedMessageService:
             # 获取频道 ID
             channel_id = patch_card.platform_channel_id
             if not channel_id:
-                # 如果 patch_card 中没有，尝试从 renderer 的 config 获取
-                if self.thread_overview_renderer and hasattr(
-                    self.thread_overview_renderer, "config"
-                ):
-                    channel_id = getattr(
-                        self.thread_overview_renderer.config,
-                        "platform_channel_id",
-                        None,
-                    )
+                # 如果 patch_card 中没有，尝试从任一渲染器的 config 获取
+                for r in self.thread_overview_renderers:
+                    cfg = getattr(r, "config", None)
+                    if cfg and getattr(cfg, "platform_channel_id", None):
+                        channel_id = str(getattr(cfg, "platform_channel_id"))
+                        break
 
             if not channel_id:
                 logger.warning(
@@ -485,8 +503,14 @@ class FeedMessageService:
                 return
 
             # 发送通知
+            # 使用第一个可用渲染器的配置发送（仅限支持该能力的平台）
+            cfg = None
+            for r in self.thread_overview_renderers:
+                if hasattr(r, "config"):
+                    cfg = r.config
+                    break
             success = await send_thread_update_notification(
-                self.thread_overview_renderer.config,
+                cfg,
                 channel_id,
                 thread.thread_id,
                 patch_card.platform_message_id,
@@ -526,7 +550,7 @@ class FeedMessageService:
             patch_card: PATCH 卡片对象
             in_reply_to_header: Reply 的 in_reply_to 头部
         """
-        if not self.thread_overview_renderer:
+        if not self.thread_overview_renderers:
             logger.debug("Thread overview renderer not configured, skipping update")
             return
 
@@ -544,7 +568,7 @@ class FeedMessageService:
 
             # 2. 查找该 Patch 对应的 Discord 消息 ID
             sub_patch_messages = thread.sub_patch_messages or {}
-            message_id = sub_patch_messages.get(str(target_patch_index))
+            message_id = sub_patch_messages.get(target_patch_index)
 
             if not message_id:
                 logger.warning(
@@ -562,13 +586,24 @@ class FeedMessageService:
                 return
 
             # 4. 更新该 Patch 的 Discord 消息
-            success = await self.thread_overview_renderer.update_sub_patch_message(
-                thread.thread_id,
-                message_id,
-                sub_overview,
-            )
+            successes = []
+            for r in self.thread_overview_renderers:
+                try:
+                    s = await r.update_sub_patch_message(
+                        thread.thread_id,
+                        message_id,
+                        sub_overview,
+                    )
+                    successes.append(bool(s))
+                except (RuntimeError, ValueError, AttributeError) as e:
+                    successes.append(False)
+                    logger.error(
+                        f"Failed to update patch [{target_patch_index}] message "
+                        f"in thread {thread.thread_id}: {e}",
+                        exc_info=True,
+                    )
 
-            if success:
+            if any(successes):
                 logger.info(
                     f"Updated patch [{target_patch_index}] message "
                     f"in thread {thread.thread_id}"

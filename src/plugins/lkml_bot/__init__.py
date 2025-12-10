@@ -74,9 +74,13 @@ message_sender = get_message_sender(database=database)
 # pylint: disable=wrong-import-position
 from .renders.patch_card.renderer import PatchCardRenderer
 from .renders.thread.renderer import ThreadOverviewRenderer
+from .renders.patch_card import FeishuPatchCardRenderer
+from .renders.thread.feishu_render import FeishuThreadOverviewRenderer
 
 patch_card_renderer = PatchCardRenderer(config=plugin_config)
+feishu_patch_card_renderer = FeishuPatchCardRenderer(config=plugin_config)
 thread_overview_renderer = ThreadOverviewRenderer(config=plugin_config)
+feishu_thread_overview_renderer = FeishuThreadOverviewRenderer(config=plugin_config)
 
 
 async def send_update_callback(subsystem: str, update_data):
@@ -89,8 +93,11 @@ async def send_update_callback(subsystem: str, update_data):
 from lkml.service.feed_message_service import FeedMessageService
 
 feed_message_service = FeedMessageService(
-    patch_card_renderer=patch_card_renderer,
-    thread_overview_renderer=thread_overview_renderer,
+    patch_card_renderers=[patch_card_renderer, feishu_patch_card_renderer],
+    thread_overview_renderers=[
+        thread_overview_renderer,
+        feishu_thread_overview_renderer,
+    ],
 )
 
 processor = FeedProcessor(

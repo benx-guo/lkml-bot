@@ -4,7 +4,9 @@
 """
 
 from .renderer import ThreadOverviewRenderer
+from .feishu_render import FeishuThreadOverviewRenderer
 
 __all__ = [
     "ThreadOverviewRenderer",
+    "FeishuThreadOverviewRenderer",
 ]

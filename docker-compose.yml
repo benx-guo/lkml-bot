@@ -11,9 +11,13 @@ services:
       - "8080:8080"
     environment:
       # Discord Bot Token（必需）
-      - DISCORD_BOTS=[{"token": "YOUR_BOT_TOKEN", "intent": {"guild_messages": true, "direct_messages": true}}]
+      - LKML_DISCORD_BOT_TOKEN=YOUR_BOT_TOKEN_HERE
+      # Discord 频道 ID（用于发送通知消息）
+      - LKML_DISCORD_CHANNEL_ID=CHANNEL_ID
       # Discord Webhook URL（用于发送通知消息）
       - LKML_DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/...
+      # Feishu Webhook URL（用于发送通知消息）
+      - LKML_FEISHU_WEBHOOK_URL=https://open.feishu.cn/open-apis/bot/v2/hook/...
       # 数据库连接 URL（使用挂载的数据目录）
       - LKML_DATABASE_URL=sqlite+aiosqlite:///./data/lkml_bot.db
       # 可选配置

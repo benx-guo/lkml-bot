@@ -4,7 +4,9 @@
 """
 
 from .renderer import PatchCardRenderer
+from .feishu_render import FeishuPatchCardRenderer
 
 __all__ = [
     "PatchCardRenderer",
+    "FeishuPatchCardRenderer",
 ]

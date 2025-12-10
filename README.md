@@ -33,10 +33,16 @@ pip install -e ".[dev]"
 
 ```bash
 # Discord Bot Token（必需）
-DISCORD_BOTS='[{"token": "YOUR_BOT_TOKEN", "intent": {"guild_messages": true, "direct_messages": true}}]'
+LKML_DISCORD_BOT_TOKEN=YOUR_BOT_TOKEN_HERE
+
+# Discord 频道 ID（用于发送通知消息）
+LKML_DISCORD_CHANNEL_ID=CHANNEL_ID
 
 # Discord Webhook URL（用于发送通知消息）
 LKML_DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/...
+
+# Feishu Webhook URL（用于发送通知消息）
+LKML_FEISHU_WEBHOOK_URL=https://open.feishu.cn/open-apis/bot/v2/hook/...
 
 # 数据库连接 URL（可选，默认为 sqlite+aiosqlite:///./lkml_bot.db）
 LKML_DATABASE_URL=sqlite+aiosqlite:///./lkml_bot.db
@@ -74,8 +80,10 @@ python bot.py
 
 | 环境变量 | 说明 | 示例 |
 |---------|------|------|
-| `DISCORD_BOTS` | Discord Bot Token JSON 配置 | `[{"token": "YOUR_TOKEN", ...}]` |
+| `LKML_DISCORD_BOT_TOKEN` | Discord Bot Token | `YOUR_BOT_TOKEN_HERE` |
+| `LKML_DISCORD_CHANNEL_ID` | Discord 频道 ID | `CHANNEL_ID` |
 | `LKML_DISCORD_WEBHOOK_URL` | Discord Webhook URL，用于发送通知消息。如果未配置，消息只会在日志中记录 | - |
+| `LKML_FEISHU_WEBHOOK_URL` | Feishu Webhook URL，用于发送通知消息。如果未配置，消息只会在日志中记录 | - |
 
 ### 可选配置
 
@@ -163,17 +171,12 @@ python bot.py
 - `/filter enable <name|id>` 启用规则
 - `/filter disable <name|id>` 禁用规则
 
-条件格式（推荐 DSL + 兼容 key=value）：
+条件格式（仅支持 key=value；逗号表示列表）：
 
-- 推荐 DSL（最终形态）：
-  - `author_email in [*@hust.edu.cn, *@openatom.club, torvalds@kernel.org]`
-  - `subject in [netconsole, TCP]`
-  - `author not in [bot, noreply]`
-- 词法含义：
-  - `in [...]` 属于其中任一项；`not in [...]` 排除任意匹配项
-  - `*@domain` 域名下任意邮箱；`user@example.com` 精确匹配该邮箱
-- 兼容 key=value：
-  - 文本按子串匹配（不区分大小写）；逗号分隔列表；数字自动转整型
+- 文本匹配：普通字符串按“子串包含”匹配（大小写不敏感）
+- 正则匹配：用 `/.../` 包裹，按不区分大小写的正则匹配
+- 列表：逗号分隔，表示“任一匹配即可”
+- 数字：自动转整型，例如 `min_patch_total=3`
 
 常用键：
 
@@ -191,10 +194,10 @@ python bot.py
 
 ```bash
 # 添加邮箱域名规则（高亮模式）
-/filter add email-domain author_email in [*@gmail.com]
+/filter add email-domain author_email=@gmail\.com
 
-# 添加邮箱域名规则（DSL，独占模式）
-/filter add email-domain author_email in [*@hust.edu.cn, *@openatom.club, *@zevorn.cn, *@gmail.com] --exclusive "仅这些域名"
+# 添加邮箱域名规则（正则，含子域，独占模式）
+/filter add email-domain author_email=/@(?:.*\.)?/@gmail\.com$/ --exclusive "仅这些域名"
 
 # 查看与列表
 /filter show email-domain
@@ -214,13 +217,7 @@ ID: 1
 模式: ⭐ 高亮模式（所有都创建但高亮匹配的）
 
 过滤条件:
-author_email: *@hust.edu.cn, *@openatom.club, *@zevorn.cn, *@gmail.com
-
-校验提示：
-
-- `*@` 后必须是合法域名，否则提示“域名格式错误，应为 *@example.com”
-- 精确邮箱必须包含 `@`，否则提示“精确邮箱请写完整地址，如 user@example.com”
-- `in [...]` 中使用英文逗号，中文逗号会自动转换但建议避免
+author_email: /@(?:.*\.)?@gmail\.com$/
 ```
 
 #### `/watch`
@@ -267,6 +264,7 @@ author_email: *@hust.edu.cn, *@openatom.club, *@zevorn.cn, *@gmail.com
 - 监控任务启动后会自动定期检查邮件列表更新并发送通知到 Discord/Feishu 频道
 - 确保 Discord Bot 在目标频道有发送消息的权限
 - 如果没有配置 `LKML_DISCORD_WEBHOOK_URL`，监控结果只会在日志中记录，不会发送到 Discord
+- 如果没有配置 `LKML_FEISHU_WEBHOOK_URL`，监控结果只会在日志中记录，不会发送到 Feishu
 
 ## TODO
 
@@ -294,7 +292,6 @@ author_email: *@hust.edu.cn, *@openatom.club, *@zevorn.cn, *@gmail.com
 src/
 ├── lkml/                        # 核心业务逻辑（独立于机器人框架）
 │   ├── config.py                # 配置管理（LKMLConfig）
-│   ├── vger_subsystem.py        # vger 子系统来源（get_vger_subsystems）
 │   ├── scheduler.py             # 任务调度器（LKMLScheduler）
 │   ├── db/                      # 数据库接口与模型
 │   │   ├── database.py          # 数据库接口与实现（LKMLDatabase）
@@ -303,10 +300,18 @@ src/
 │   │   ├── service.py           # 基础服务
 │   │   ├── monitoring_service.py# 监控相关服务
 │   │   ├── subsystem_service.py # 子系统相关服务
-│   │   └── query_service.py     # 查询相关服务
+│   │   ├── query_service.py     # 查询相关服务
+│   │   ├── patch_card_service.py# Patch Card 相关服务
+│   │   ├── thread_service.py    # Thread 相关服务
+│   │   ├── feed_message_service.py # Feed 消息处理（渲染编排）
+│   │   ├── patch_card_filter_service.py # 过滤规则服务
+│   │   ├── operation_log_service.py     # 操作日志服务
+│   │   └── helpers.py           # 服务层辅助函数
 │   └── feed/                    # 邮件列表监控
 │       ├── feed.py              # Feed 抓取与入库
 │       ├── feed_monitor.py      # 监控编排（LKMLFeedMonitor）
+│       ├── feed_message_classifier.py # PATCH 主题解析
+│       ├── vger_subsystems.py   # vger 子系统来源（get_vger_subsystems）
 │       └── types.py             # 数据类型定义
 └── plugins/
     └── lkml_bot/                # NoneBot 插件实现
@@ -314,14 +319,14 @@ src/
         ├── config.py            # 插件侧配置（继承 LKMLConfig）
         ├── shared.py            # 插件共享工具
         ├── message_sender.py    # 聚合发送器
+        ├── client/              # 平台客户端（Discord 等）
         ├── commands/            # 命令处理器
-        ├── adapters/            # 消息适配器（Discord 等）
-        └── renders/             # 消息渲染器（Discord/Feishu）
+        └── renders/             # 渲染器集合（Discord/Feishu，PatchCard/Thread）
 ```
 
 ## 代码规范和格式化
 
-项目使用 [Ruff](https://github.com/astral-sh/ruff) 进行代码检查和格式化，使用 [MyPy](https://mypy.readthedocs.io/) 进行类型检查。
+项目使用 make check-fmt && make check-lint 进行代码检查和格式化。
 
 ### 安装开发工具
 
@@ -343,7 +348,6 @@ make check-fmt
 ### VS Code 集成
 
 推荐安装以下 VS Code 扩展：
-- [Ruff](https://marketplace.visualstudio.com/items?itemName=charliermarsh.ruff) - 代码检查和格式化
 - [MyPy Type Checker](https://marketplace.visualstudio.com/items?itemName=ms-python.mypy-type-checker) - 类型检查
 
 ## 文档

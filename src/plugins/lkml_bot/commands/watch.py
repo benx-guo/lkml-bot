@@ -30,6 +30,7 @@ from ..shared import (
     get_user_info_or_finish,
 )
 from ..renders.patch_card.renderer import PatchCardRenderer
+from ..renders.patch_card import FeishuPatchCardRenderer
 from ..renders.thread.renderer import ThreadOverviewRenderer
 from ..client import (
     DiscordHTTPError,
@@ -331,7 +332,7 @@ async def _create_patch_card(feed_message, patch_info, matcher) -> Optional[Patc
     """创建 PATCH 卡片
 
     流程：
-    1. 渲染并发送到 Discord
+    1. 渲染并发送到
     2. 保存到数据库
     """
     try:
@@ -339,11 +340,14 @@ async def _create_patch_card(feed_message, patch_info, matcher) -> Optional[Patc
 
         config = get_config()
 
-        # 1. 渲染并发送到 Discord
+        # 1. 渲染并发送到
         temp_patch_card = _build_temp_patch_card(feed_message, patch_info, config)
 
         renderer = PatchCardRenderer(config)
         platform_message_id = await renderer.render_and_send(temp_patch_card)
+
+        feishu_renderer = FeishuPatchCardRenderer(config)
+        await feishu_renderer.render_and_send(temp_patch_card)
 
         if not platform_message_id:
             logger.error(
