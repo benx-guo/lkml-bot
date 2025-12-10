@@ -11,10 +11,11 @@
 """
 
 import sys
+import logging
 from pathlib import Path
 
 from nonebot import get_driver
-from nonebot.log import logger
+from nonebot.log import logger, LoguruHandler
 
 # 1) 环境与路径
 # 加载 .env 文件（如果存在）
@@ -46,7 +47,8 @@ from lkml.scheduler import LKMLScheduler  # noqa: E402
 
 # 本地导入
 from .config import get_config  # noqa: E402
-from .message_sender import MessageSender  # noqa: E402
+from .message_sender import get_message_sender  # noqa: E402
+from .shared import set_database as set_plugin_database  # noqa: E402
 
 # pylint: enable=wrong-import-position
 
@@ -57,6 +59,7 @@ database = LKMLDatabase(plugin_config.database_url, Base)
 # 设置基础设施（PluginConfig 已经实现了 Config 接口）
 set_config(plugin_config)
 set_database(database)
+set_plugin_database(database)  # 也在插件层设置数据库
 
 # 3) 注册子系统来源（数据来源由实现决定）
 try:
@@ -65,7 +68,15 @@ except (AttributeError, ValueError) as e:
     logger.warning(f"Failed to register vger subsystems getter: {e}")
 
 # 4) 创建监控与调度实例（使用适配器的消息发送器）
-message_sender = MessageSender()
+message_sender = get_message_sender(database=database)
+
+# 使用渲染器（新架构）
+# pylint: disable=wrong-import-position
+from .renders.patch_card.renderer import PatchCardRenderer
+from .renders.thread.renderer import ThreadOverviewRenderer
+
+patch_card_renderer = PatchCardRenderer(config=plugin_config)
+thread_overview_renderer = ThreadOverviewRenderer(config=plugin_config)
 
 
 async def send_update_callback(subsystem: str, update_data):
@@ -73,10 +84,24 @@ async def send_update_callback(subsystem: str, update_data):
     await message_sender.send_subsystem_update(subsystem, update_data)
 
 
-# 使用依赖注入创建监控器与调度器
-processor = FeedProcessor(database=database)
+# 创建 FeedMessageService（使用新架构的渲染器）
+# pylint: disable=wrong-import-position,wrong-import-order
+from lkml.service.feed_message_service import FeedMessageService
+
+feed_message_service = FeedMessageService(
+    patch_card_renderer=patch_card_renderer,
+    thread_overview_renderer=thread_overview_renderer,
+)
+
+processor = FeedProcessor(
+    database=database,
+    thread_manager=None,  # 不再需要 ThreadManager
+    feed_message_service=feed_message_service,
+)
 monitor = LKMLFeedMonitor(config=plugin_config, processor=processor, database=database)
-scheduler = LKMLScheduler(message_sender=send_update_callback)
+scheduler = LKMLScheduler(
+    message_sender=send_update_callback,
+)
 scheduler.monitor = monitor
 
 # 将调度器注册到 lkml 层
@@ -95,6 +120,15 @@ from .commands import unsubscribe  # noqa: F401, E402
 from .commands import start_monitor  # noqa: F401, E402
 from .commands import stop_monitor  # noqa: F401, E402
 from .commands import run_monitor  # noqa: F401, E402
+from .commands import watch  # noqa: F401, E402
+from .commands import filter as filter_command  # noqa: F401, E402
+
+# 重建卡片功能已移除
+# from .commands import rebuild_thread  # noqa: F401, E402
+# from .commands import rebuild_series  # noqa: F401, E402
+
+# 导入交互端点（注册 FastAPI 路由）- 保留以备将来使用
+# interaction_endpoint 已删除（改用命令订阅模式）
 
 # pylint: enable=wrong-import-position
 
@@ -105,10 +139,33 @@ __all__ = [
     "start_monitor",
     "stop_monitor",
     "run_monitor",
+    "watch",
+    "filter_command",
 ]
 
 
-# 6) 机器人生命周期：启动/停止钩子
+# 6) 配置标准 Python logging 转发到 NoneBot 的 loguru
+# 在插件加载时配置，确保 NoneBot 已初始化
+def _setup_logging_bridge():
+    """配置标准 Python logging 转发到 loguru"""
+    root_logger = logging.getLogger()
+    root_logger.setLevel(logging.INFO)
+    # 避免重复添加 handler
+    if not any(isinstance(h, LoguruHandler) for h in root_logger.handlers):
+        root_logger.addHandler(LoguruHandler())
+        logger.info("✓ Configured LoguruHandler for standard Python logging")
+
+        # 测试日志桥接是否工作
+        test_logger = logging.getLogger("lkml.service.thread_service")
+        test_logger.info("✓ Logging bridge test: standard logging -> loguru is working")
+    else:
+        logger.debug("LoguruHandler already configured")
+
+
+# 立即配置日志桥接
+_setup_logging_bridge()
+
+# 7) 机器人生命周期：启动/停止钩子
 driver = get_driver()
 
 
@@ -117,9 +174,7 @@ async def auto_start_monitoring():
     """在 bot 启动时自动启动监控任务"""
     try:
         # pylint: disable=import-outside-toplevel  # noqa: E402
-        from lkml.scheduler import (
-            get_scheduler,
-        )
+        from lkml.scheduler import get_scheduler
 
         current_scheduler = get_scheduler()
         if not current_scheduler.is_running:
@@ -136,9 +191,7 @@ async def auto_stop_monitoring():
     """在 bot 关闭时停止监控任务"""
     try:
         # pylint: disable=import-outside-toplevel
-        from lkml.scheduler import (
-            get_scheduler,
-        )
+        from lkml.scheduler import get_scheduler
 
         current_scheduler = get_scheduler()
         if current_scheduler.is_running:

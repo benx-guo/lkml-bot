@@ -7,14 +7,14 @@
 """
 
 from .database import Database, LKMLDatabase, get_database, set_database
-from .models import Base, EmailMessage, OperationLog, Subsystem
-from .repo import (
-    EMAIL_MESSAGE_REPO,
-    EmailMessageData,
-    EmailMessageRepository,
-    SUBSYSTEM_REPO,
-    SubsystemRepository,
-    _REPO_EXPORT_NAMES,
+from .models import (
+    Base,
+    FeedMessageModel,
+    OperationLog,
+    Subsystem,
+    PatchCardModel,
+    PatchThreadModel,
+    PatchCardFilterModel,
 )
 
 __all__ = [
@@ -24,7 +24,9 @@ __all__ = [
     "set_database",
     "Base",
     "Subsystem",
-    "EmailMessage",
+    "FeedMessageModel",
+    "PatchCardModel",
+    "PatchThreadModel",
+    "PatchCardFilterModel",
     "OperationLog",
-    *_REPO_EXPORT_NAMES,
 ]

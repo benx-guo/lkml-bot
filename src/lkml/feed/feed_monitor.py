@@ -6,7 +6,9 @@
 from datetime import datetime
 from typing import List, Optional, Tuple
 
-from nonebot.log import logger
+import logging
+
+logger = logging.getLogger(__name__)
 
 from ..config import Config
 from ..db.database import Database
