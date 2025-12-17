@@ -70,17 +70,49 @@ except (AttributeError, ValueError) as e:
 # 4) 创建监控与调度实例（使用适配器的消息发送器）
 message_sender = get_message_sender(database=database)
 
-# 使用渲染器（新架构）
+# 使用渲染器与客户端（统一的多平台发送服务）
 # pylint: disable=wrong-import-position
 from .renders.patch_card.renderer import PatchCardRenderer
 from .renders.thread.renderer import ThreadOverviewRenderer
 from .renders.patch_card import FeishuPatchCardRenderer
 from .renders.thread.feishu_render import FeishuThreadOverviewRenderer
+from .client.discord_client import DiscordClient
+from .client.feishu_client import FeishuClient
+from .multi_platform_sender import MultiPlatformPatchCardSender
 
 patch_card_renderer = PatchCardRenderer(config=plugin_config)
 feishu_patch_card_renderer = FeishuPatchCardRenderer(config=plugin_config)
 thread_overview_renderer = ThreadOverviewRenderer(config=plugin_config)
 feishu_thread_overview_renderer = FeishuThreadOverviewRenderer(config=plugin_config)
+
+# 平台客户端实例（每个平台一套）
+discord_client = DiscordClient(config=plugin_config)
+feishu_client = FeishuClient(config=plugin_config)
+
+# 多平台 PatchCard 发送服务（Discord + Feishu）
+from .shared import set_patch_card_sender
+from .multi_platform_thread_sender import MultiPlatformThreadSender
+
+patch_card_sender = MultiPlatformPatchCardSender(
+    discord_client=discord_client,
+    discord_renderer=patch_card_renderer,
+    feishu_client=feishu_client,
+    feishu_renderer=feishu_patch_card_renderer,
+)
+
+# 多平台 Thread 发送服务（Discord + Feishu）
+thread_sender = MultiPlatformThreadSender(
+    discord_client=discord_client,
+    discord_renderer=thread_overview_renderer,
+    feishu_client=feishu_client,
+    feishu_renderer=feishu_thread_overview_renderer,
+)
+
+# 注册到 shared 模块，供命令模块使用
+from .shared import set_thread_sender
+
+set_patch_card_sender(patch_card_sender)
+set_thread_sender(thread_sender)
 
 
 async def send_update_callback(subsystem: str, update_data):
@@ -88,16 +120,13 @@ async def send_update_callback(subsystem: str, update_data):
     await message_sender.send_subsystem_update(subsystem, update_data)
 
 
-# 创建 FeedMessageService（使用新架构的渲染器）
+# 创建 FeedMessageService（使用统一的多平台发送服务）
 # pylint: disable=wrong-import-position,wrong-import-order
 from lkml.service.feed_message_service import FeedMessageService
 
 feed_message_service = FeedMessageService(
-    patch_card_renderers=[patch_card_renderer, feishu_patch_card_renderer],
-    thread_overview_renderers=[
-        thread_overview_renderer,
-        feishu_thread_overview_renderer,
-    ],
+    patch_card_sender=patch_card_sender,
+    thread_sender=thread_sender,
 )
 
 processor = FeedProcessor(
