@@ -1,30 +1,27 @@
 """PatchCard 渲染器
 
-Plugins 层渲染器：只负责将 PatchCard 渲染成 Discord Embed 并发送。
-所有业务逻辑由 Service 层处理。
+Plugins 层渲染器：只负责将 PatchCard 渲染成 Discord 格式。
+所有业务逻辑由 Service 层处理，发送由客户端处理。
 """
-
-from typing import Optional
-
-from nonebot.log import logger
 
 from lkml.service import PatchCard
 
-from ...client import send_discord_embed
+from ...client.discord_params import PatchCardParams
+from ..types import DiscordRenderedPatchCard
 
 
 class PatchCardRenderer:
     """PatchCard 渲染器
 
     职责：
-    1. 将 PatchCard 渲染成 Discord Embed
-    2. 发送到 Discord
-    3. 仅此而已
+    1. 将 PatchCard 渲染成 Discord Embed 格式
+    2. 仅此而已
 
     不做：
     - 数据查询
     - 业务逻辑判断
     - 数据库操作
+    - 发送消息（由客户端负责）
     """
 
     def __init__(self, config):
@@ -35,54 +32,45 @@ class PatchCardRenderer:
         """
         self.config = config
 
-    async def render_and_send(self, patch_card: PatchCard) -> Optional[str]:
-        """渲染并发送 PatchCard 到 Discord
+    def render(self, patch_card: PatchCard) -> DiscordRenderedPatchCard:
+        """渲染 PatchCard 为 Discord 格式（不发送）
 
         Args:
             patch_card: PatchCard 数据（由 Service 层准备好，包含 series_patches）
 
         Returns:
-            Discord 消息 ID，失败返回 None
+            DiscordRenderedPatchCard 渲染结果
         """
-        try:
-            if not self.config.discord_bot_token or not self.config.platform_channel_id:
-                logger.error("Discord bot token or channel ID not configured")
-                return None
+        # 构建描述
+        description = self._build_description(patch_card)
 
-            # 构建描述
-            description = self._build_description(patch_card)
+        # 构建标题（如果匹配了 filter，添加高亮标记）
+        title_prefix = "⭐ " if patch_card.matched_filters else "📨 "
+        title = f"{title_prefix}{patch_card.subject[:200]}"
 
-            # 构建标题（如果匹配了 filter，添加高亮标记）
-            title_prefix = "⭐ " if patch_card.matched_filters else "📨 "
-            title = f"{title_prefix}{patch_card.subject[:200]}"
+        # 构建 Embed 参数
+        params = PatchCardParams(
+            subsystem=patch_card.subsystem_name,
+            message_id_header=patch_card.message_id_header,
+            subject=patch_card.subject,
+            author=patch_card.author,
+            received_at=patch_card.expires_at,  # FIXME: 应该用 received_at
+            url=patch_card.url,
+            series_message_id=patch_card.series_message_id,
+            patch_version=patch_card.patch_version,
+            patch_index=patch_card.patch_index,
+            patch_total=patch_card.patch_total,
+        )
 
-            # 构建 Embed 数据
-            from ...client import PatchCardParams
+        # 如果匹配了 filter，使用高亮颜色（金色）
+        embed_color = 0xFFD700 if patch_card.matched_filters else 0x5865F2
 
-            params = PatchCardParams(
-                subsystem=patch_card.subsystem_name,
-                message_id_header=patch_card.message_id_header,
-                subject=patch_card.subject,
-                author=patch_card.author,
-                received_at=patch_card.expires_at,  # FIXME: 应该用 received_at
-                url=patch_card.url,
-                series_message_id=patch_card.series_message_id,
-                patch_version=patch_card.patch_version,
-                patch_index=patch_card.patch_index,
-                patch_total=patch_card.patch_total,
-            )
-
-            # 如果匹配了 filter，使用高亮颜色（金色）
-            embed_color = 0xFFD700 if patch_card.matched_filters else 0x5865F2
-
-            # 发送 Embed（纯渲染）
-            return await send_discord_embed(
-                self.config, params, description, embed_color=embed_color, title=title
-            )
-
-        except (RuntimeError, ValueError, AttributeError) as e:
-            logger.error(f"Failed to render and send patch card: {e}", exc_info=True)
-            return None
+        return DiscordRenderedPatchCard(
+            params=params,
+            description=description,
+            embed_color=embed_color,
+            title=title,
+        )
 
     def _build_description(self, patch_card: PatchCard) -> str:
         """构建 Embed 描述（纯渲染逻辑）
