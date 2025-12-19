@@ -14,6 +14,7 @@ class PluginConfig(BaseLKMLConfig):
     discord_bot_token: str = ""  # Discord Bot Token（用于 Thread 操作）
     platform_channel_id: str = ""  # Discord 频道 ID（用于发送消息和创建 Thread）
     bot_mention_name: str = "@lkml-bot"  # Bot 在消息中的提及名称
+    feishu_webhook_url: str = ""
 
     # Thread 相关配置
     thread_subscription_timeout_hours: int = 24  # 订阅卡片过期时间（小时）
@@ -37,6 +38,7 @@ class PluginConfig(BaseLKMLConfig):
         discord_bot_token = os.getenv("LKML_DISCORD_BOT_TOKEN", "")
         platform_channel_id = os.getenv("LKML_DISCORD_CHANNEL_ID", "")
         bot_mention_name = os.getenv("LKML_BOT_MENTION_NAME", "@lkml-bot")
+        feishu_webhook_url = os.getenv("LKML_FEISHU_WEBHOOK_URL", "")
 
         # Thread 相关配置
         thread_subscription_timeout_hours = int(
@@ -57,6 +59,7 @@ class PluginConfig(BaseLKMLConfig):
             discord_bot_token=discord_bot_token,
             platform_channel_id=platform_channel_id,
             bot_mention_name=bot_mention_name,
+            feishu_webhook_url=feishu_webhook_url,
             thread_subscription_timeout_hours=thread_subscription_timeout_hours,
             thread_pool_max_size=thread_pool_max_size,
             card_builder_interval_minutes=card_builder_interval_minutes,

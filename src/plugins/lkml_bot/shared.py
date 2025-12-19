@@ -253,3 +253,49 @@ def get_session_provider():
     from lkml.db.database import get_session_provider
 
     return get_session_provider()
+
+
+# PatchCard 多平台发送器单例
+_patch_card_sender = None
+
+
+def set_patch_card_sender(sender):
+    """设置 PatchCard 多平台发送器实例
+
+    Args:
+        sender: MultiPlatformPatchCardSender 实例
+    """
+    global _patch_card_sender  # pylint: disable=global-statement
+    _patch_card_sender = sender
+
+
+def get_patch_card_sender():
+    """获取 PatchCard 多平台发送器实例
+
+    Returns:
+        MultiPlatformPatchCardSender 实例，如果未初始化则返回 None
+    """
+    return _patch_card_sender
+
+
+# Thread 多平台发送器单例
+_thread_sender = None
+
+
+def set_thread_sender(sender):
+    """设置 Thread 多平台发送器实例
+
+    Args:
+        sender: MultiPlatformThreadSender 实例
+    """
+    global _thread_sender  # pylint: disable=global-statement
+    _thread_sender = sender
+
+
+def get_thread_sender():
+    """获取 Thread 多平台发送器实例
+
+    Returns:
+        MultiPlatformThreadSender 实例，如果未初始化则返回 None
+    """
+    return _thread_sender
