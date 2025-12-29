@@ -24,9 +24,15 @@ class MigrationRunner:
         """
         self.engine = engine
         if migrations_dir is None:
-            # 默认迁移目录：项目根目录下的 migrations
-            project_root = Path(__file__).parent.parent.parent.parent
-            migrations_dir = project_root / "migrations"
+            # 默认迁移目录：当前工作目录下的 migrations
+            # 在 Docker 容器中，工作目录是 /app，所以是 /app/migrations
+            # 在本地开发时，工作目录是项目根目录，所以是项目根目录/migrations
+            migrations_dir = Path.cwd() / "migrations"
+            # 如果当前工作目录下没有 migrations，尝试从代码位置推断项目根目录
+            if not migrations_dir.exists():
+                current_file = Path(__file__).resolve()
+                project_root = current_file.parent.parent.parent.parent
+                migrations_dir = project_root / "migrations"
         self.migrations_dir = migrations_dir
 
     async def ensure_migrations_table(self):
