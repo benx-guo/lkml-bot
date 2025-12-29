@@ -35,6 +35,7 @@ class PatchCardData:
     patch_total: Optional[int] = None
     id: Optional[int] = None  # 数据库 ID（Repository 层内部使用，不暴露给上层）
     has_thread: bool = False  # 是否已建立 Thread
+    to_cc_list: Optional[list] = None  # To 和 CC 列表（从 root patch 抓取，合并去重）
 
 
 class PatchCardRepository:  # pylint: disable=too-many-instance-attributes
@@ -74,6 +75,7 @@ class PatchCardRepository:  # pylint: disable=too-many-instance-attributes
             patch_total=model.patch_total,
             id=model.id,
             has_thread=model.has_thread,
+            to_cc_list=model.to_cc_list,
         )
 
     async def create(self, data: PatchCardData) -> PatchCardData:
@@ -99,6 +101,7 @@ class PatchCardRepository:  # pylint: disable=too-many-instance-attributes
             patch_version=data.patch_version,
             patch_index=data.patch_index,
             patch_total=data.patch_total,
+            to_cc_list=data.to_cc_list,
         )
         self.session.add(patch_card)
         await self.session.flush()
