@@ -746,11 +746,21 @@ class FeedMessageService:
             - matched_filter_names: 匹配的过滤规则名称列表
         """
         try:
-            from ..db.repo import PatchCardFilterRepository
+            from ..db.repo import (
+                PatchCardFilterRepository as LocalPatchCardFilterRepository,
+                PatchCardRepository as LocalPatchCardRepository,
+                FilterConfigRepository,
+                FeedMessageRepository as LocalFeedMessageRepository,
+            )
             from .patch_card_filter_service import PatchCardFilterService
 
-            filter_repo = PatchCardFilterRepository(session)
-            filter_service = PatchCardFilterService(filter_repo)
+            filter_repo = LocalPatchCardFilterRepository(session)
+            patch_card_repo = LocalPatchCardRepository(session)
+            filter_config_repo = FilterConfigRepository(session)
+            feed_message_repo = LocalFeedMessageRepository(session)
+            filter_service = PatchCardFilterService(
+                filter_repo, patch_card_repo, filter_config_repo, feed_message_repo
+            )
 
             return await filter_service.should_create_patch_card(
                 service_feed_message, patch_info
