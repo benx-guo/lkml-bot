@@ -290,6 +290,14 @@ class PatchCardService:
                 feed_message.patch_total and feed_message.patch_total > 1
             )
 
+            # 所有 PatchCard 都要维护 To 和 CC 列表（无论是 Single Patch 还是 Series Patch）
+            # 直接从当前 patch 的 URL 抓取 To 和 CC 列表（合并）
+            to_cc_list = None
+            if feed_message.url:
+                from ..feed.cc_fetcher import fetch_cc_list_from_url
+
+                to_cc_list = await fetch_cc_list_from_url(feed_message.url)
+
             # 构建 PatchCard 数据
             patch_card = PatchCard(
                 message_id_header=feed_message.message_id_header,
@@ -307,6 +315,7 @@ class PatchCardService:
                 patch_total=feed_message.patch_total,
                 has_thread=False,
                 is_cover_letter=feed_message.is_cover_letter,
+                to_cc_list=to_cc_list,
             )
 
             # 保存到数据库

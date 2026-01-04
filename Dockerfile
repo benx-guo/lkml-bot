@@ -24,6 +24,9 @@ COPY src/ ./src/
 COPY README.md ./
 COPY LICENSE ./
 
+# 复制迁移文件
+COPY migrations/ ./migrations/
+
 # 安装 Python 运行时依赖（从 pyproject.toml）
 # 先安装 httpx 以确保版本兼容性（nonebot2 2.0+ 需要 httpx>=0.24.0 以支持 proxy 参数）
 RUN pip install --no-cache-dir "httpx>=0.24.0" && \
@@ -31,6 +34,9 @@ RUN pip install --no-cache-dir "httpx>=0.24.0" && \
 
 # 复制应用入口文件
 COPY bot.py .
+
+# 验证迁移文件已复制
+RUN ls -la /app/migrations/ || echo "WARNING: migrations directory not found"
 
 # 创建数据目录（用于 SQLite 数据库持久化）
 RUN mkdir -p /app/data && chmod 755 /app/data

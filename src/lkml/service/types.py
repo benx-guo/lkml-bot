@@ -45,6 +45,9 @@ class PatchCard:
     patch_total: Optional[int] = None
     has_thread: bool = False  # 是否已建立 Thread
     is_cover_letter: bool = False  # 是否是 Cover Letter
+    to_cc_list: Optional[List[str]] = (
+        None  # To 和 CC 列表（从 root patch 抓取，合并去重）
+    )
 
     # 渲染相关字段（供 Plugins 层使用）
     series_patches: Optional[List[SeriesPatchInfo]] = (

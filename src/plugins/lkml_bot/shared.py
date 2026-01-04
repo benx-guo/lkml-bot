@@ -219,6 +219,72 @@ def get_base_help_header() -> str:
     return f"用法: {get_bot_mention_name()} /<子命令> [参数...]\n"
 
 
+async def send_embed_message(
+    event: Event,
+    title: str,
+    description: str,
+    cmd_handler,
+    color: int = 0x5865F2,
+) -> None:
+    """发送 embed 格式的消息（通用函数）
+
+    Args:
+        event: 事件对象
+        title: embed 标题
+        description: embed 描述
+        cmd_handler: 命令处理器（用于 finish）
+        color: embed 颜色，默认 Discord 蓝色
+    """
+    import httpx
+
+    config = get_config()
+
+    # 如果 Discord 配置不可用，退回到文本输出
+    if not config.discord_bot_token or not config.platform_channel_id:
+        text = f"{title}\n\n{description}"
+        await cmd_handler.finish(text)
+        return
+
+    # 获取频道 ID
+    channel_id = config.platform_channel_id
+    if hasattr(event, "channel_id"):
+        channel_id = str(event.channel_id)
+
+    embed = {
+        "title": title,
+        "description": description,
+        "color": color,
+        "footer": {"text": "LKML Bot"},
+    }
+
+    headers = {
+        "Authorization": f"Bot {config.discord_bot_token}",
+        "Content-Type": "application/json",
+    }
+
+    try:
+        async with httpx.AsyncClient() as client:
+            await client.post(
+                f"https://discord.com/api/v10/channels/{channel_id}/messages",
+                json={"embeds": [embed]},
+                headers=headers,
+                timeout=30.0,
+            )
+        await cmd_handler.finish()
+    except FinishedException:
+        # finish() 正常抛出的异常，重新抛出
+        raise
+    except (RuntimeError, ValueError, AttributeError, KeyError) as e:
+        logger.error(f"Error sending embed message: {e}", exc_info=True)
+        # 失败时回退到文本格式
+        try:
+            text = f"{title}\n\n{description}"
+            await cmd_handler.finish(text)
+        except FinishedException:
+            # finish() 正常抛出的异常，重新抛出
+            raise
+
+
 # 数据库单例
 _database = None
 
