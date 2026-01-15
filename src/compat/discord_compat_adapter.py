@@ -6,20 +6,21 @@
 
 import asyncio
 from typing import Optional
+
 from pydantic import ValidationError
 
-from nonebot.log import logger
-from nonebot.exception import WebSocketClosed
 from nonebot.adapters.discord import Adapter as DiscordAdapter
 from nonebot.adapters.discord.event import Event as DiscordEvent, MessageEvent
 from nonebot.adapters.discord.payload import (
     Dispatch,
     Heartbeat,
     HeartbeatAck,
-    Reconnect,
     InvalidSession,
     Payload,
+    Reconnect,
 )
+from nonebot.exception import WebSocketClosed
+from nonebot.log import logger
 
 
 class CompatibleDiscordAdapter(DiscordAdapter):
@@ -51,7 +52,7 @@ class CompatibleDiscordAdapter(DiscordAdapter):
         except ValidationError as e:
             # 捕获 Pydantic 验证错误
             logger.error(
-                f"Discord event validation error (ignored to prevent crash): "
+                "Discord event validation error (ignored to prevent crash): "
                 f"event_type={event_type}, sequence={sequence}, "
                 f"errors={len(e.errors())}"
             )
@@ -68,7 +69,7 @@ class CompatibleDiscordAdapter(DiscordAdapter):
         except (RuntimeError, ValueError, AttributeError, TypeError, OSError) as e:
             # 捕获常见的运行时异常，记录但不抛出
             logger.error(
-                f"Unexpected error parsing Discord event (ignored to prevent crash): "
+                "Unexpected error parsing Discord event (ignored to prevent crash): "
                 f"event_type={event_type}, sequence={sequence}, "
                 f"error={type(e).__name__}: {e}",
                 exc_info=True,
@@ -91,7 +92,7 @@ class CompatibleDiscordAdapter(DiscordAdapter):
         if event is None:
             # 如果事件解析失败（返回 None），跳过这个事件
             logger.debug(
-                f"Skipping event due to validation error: "
+                "Skipping event due to validation error: "
                 f"type={payload.type}, sequence={payload.sequence}"
             )
             return True
@@ -198,7 +199,7 @@ class CompatibleDiscordAdapter(DiscordAdapter):
         ):
             # 捕获常见的运行时异常，记录但不中断循环
             logger.error(
-                f"Error in Discord adapter loop (continuing to prevent crash): "
+                "Error in Discord adapter loop (continuing to prevent crash): "
                 f"{type(exception).__name__}: {exception}",
                 exc_info=True,
             )
@@ -207,7 +208,7 @@ class CompatibleDiscordAdapter(DiscordAdapter):
             return True
         # 其他未知异常，记录但不中断循环
         logger.error(
-            f"Unexpected error in Discord adapter loop (continuing): "
+            "Unexpected error in Discord adapter loop (continuing): "
             f"{type(exception).__name__}: {exception}",
             exc_info=True,
         )
