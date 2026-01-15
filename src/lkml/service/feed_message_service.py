@@ -675,6 +675,29 @@ class FeedMessageService:
                 return single_patch, 1
             return None, None
 
+        # Series Patch：首先检查是否回复 Cover Letter
+        if patch_card.message_id_header in in_reply_to:
+            # 回复 Cover Letter，查找 Cover Letter 对应的 patch
+            if patch_card.series_patches:
+                for patch in patch_card.series_patches:
+                    if patch.patch_index == 0:  # Cover Letter
+                        return patch, 0
+            # 如果找不到 Cover Letter 的 patch，使用 patch_card 构建一个
+            # 这种情况不应该发生，但为了健壮性，我们处理它
+            logger.warning(
+                f"Cover Letter patch not found in series_patches for {patch_card.message_id_header}, "
+                f"using patch_card to build patch info"
+            )
+            from .types import SeriesPatchInfo
+            cover_patch = SeriesPatchInfo(
+                subject=patch_card.subject,
+                patch_index=0,
+                patch_total=patch_card.patch_total or 1,
+                message_id=patch_card.message_id_header,
+                url=patch_card.url or "",
+            )
+            return cover_patch, 0
+
         # Series Patch：查找匹配的子 Patch
         if patch_card.series_patches:
             for patch in patch_card.series_patches:
