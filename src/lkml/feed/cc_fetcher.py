@@ -38,8 +38,15 @@ def _clean_html_text(text: str) -> str:
     Returns:
         清理后的文本
     """
-    # 移除 HTML 标签
-    text = re.sub(r"<[^>]+>", " ", text)
+    if not text:
+        return ""
+
+    # 先保留形如 <email@domain> 的邮箱，避免被当成 HTML 标签移除
+    email_in_brackets = r"<([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})>"
+    text = re.sub(email_in_brackets, r"\1", text)
+
+    # 移除 HTML 标签（保留标签内部文本）
+    text = re.sub(r"</?\w+[^>]*>", " ", text)
     # 清理空白字符
     text = re.sub(r"\s+", " ", text).strip()
     return text
