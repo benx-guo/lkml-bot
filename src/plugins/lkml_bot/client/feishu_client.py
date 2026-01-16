@@ -36,6 +36,33 @@ class FeishuClient(
         self.config = config
         self.webhook_url: str = getattr(config, "feishu_webhook_url", "") or ""
 
+    async def _post_webhook(self, payload: dict, purpose: str) -> bool:
+        """发送 webhook 请求并统一处理错误"""
+        if not self.webhook_url:
+            logger.debug("Feishu webhook URL not configured, skip sending %s", purpose)
+            return False
+
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    self.webhook_url, json=payload, timeout=30.0
+                )
+                if response.status_code in {200, 201}:
+                    return True
+                logger.warning(
+                    "Failed to send %s to Feishu: %s, %s",
+                    purpose,
+                    response.status_code,
+                    response.text,
+                )
+                return False
+        except httpx.HTTPError as e:
+            logger.warning("HTTP error sending %s to Feishu: %s", purpose, e)
+            return False
+        except (ValueError, KeyError, TypeError) as e:
+            logger.warning("Data error sending %s to Feishu: %s", purpose, e)
+            return False
+
     async def send_patch_card(
         self, rendered_data: FeishuRenderedPatchCard
     ) -> Optional[str]:
@@ -47,29 +74,29 @@ class FeishuClient(
         Returns:
             由于 Feishu webhook 一般不会返回消息 ID，这里统一返回 None。
         """
-        if not self.webhook_url:
-            # 未配置 Feishu webhook，直接跳过
-            logger.debug("Feishu webhook URL not configured, skip sending patch card")
-            return None
-
-        try:
-            async with httpx.AsyncClient() as client:
-                response = await client.post(
-                    self.webhook_url, json=rendered_data.card, timeout=30.0
-                )
-                if response.status_code not in {200, 201}:
-                    logger.warning(
-                        "Failed to send patch card to Feishu: %s, %s",
-                        response.status_code,
-                        response.text,
-                    )
-        except httpx.HTTPError as e:
-            logger.warning("HTTP error sending patch card to Feishu: %s", e)
-        except (ValueError, KeyError, TypeError) as e:
-            logger.warning("Data error sending patch card to Feishu: %s", e)
+        await self._post_webhook(rendered_data.card, "patch card")
 
         # 当前不返回 Feishu 消息 ID
         return None
+
+    async def send_card_message(self, card: dict) -> bool:
+        """发送卡片消息到 Feishu webhook"""
+        payload = {"msg_type": "interactive", "card": card}
+        return await self._post_webhook(payload, "card message")
+
+    async def send_webhook_payload(
+        self, payload: dict, purpose: str = "webhook"
+    ) -> bool:
+        """发送完整的 webhook payload 到 Feishu
+
+        Args:
+            payload: 完整的 webhook payload（包含 msg_type 和 card）
+            purpose: 用途描述，用于日志记录
+
+        Returns:
+            成功返回 True，失败返回 False
+        """
+        return await self._post_webhook(payload, purpose)
 
     # ========== ThreadClient 接口实现 ==========
 
@@ -107,27 +134,7 @@ class FeishuClient(
             )
             return {}
 
-        if not self.webhook_url:
-            logger.debug(
-                "Feishu webhook URL not configured, skip sending thread notification"
-            )
-            return {}
-
-        try:
-            async with httpx.AsyncClient() as client:
-                response = await client.post(
-                    self.webhook_url, json=overview_data.card, timeout=30.0
-                )
-                if response.status_code not in {200, 201}:
-                    logger.warning(
-                        "Failed to send thread notification to Feishu: %s, %s",
-                        response.status_code,
-                        response.text,
-                    )
-        except httpx.HTTPError as e:
-            logger.warning("HTTP error sending thread notification to Feishu: %s", e)
-        except (ValueError, KeyError, TypeError) as e:
-            logger.warning("Data error sending thread notification to Feishu: %s", e)
+        await self._post_webhook(overview_data.card, "thread notification")
 
         return {}
 
@@ -151,35 +158,9 @@ class FeishuClient(
             )
             return False
 
-        if not self.webhook_url:
-            logger.debug(
-                "Feishu webhook URL not configured, skip sending thread update notification"
-            )
-            return False
-
-        try:
-            async with httpx.AsyncClient() as client:
-                response = await client.post(
-                    self.webhook_url, json=overview_data.card, timeout=30.0
-                )
-                if response.status_code in {200, 201}:
-                    return True
-                logger.warning(
-                    "Failed to send thread update notification to Feishu: %s, %s",
-                    response.status_code,
-                    response.text,
-                )
-                return False
-        except httpx.HTTPError as e:
-            logger.warning(
-                "HTTP error sending thread update notification to Feishu: %s", e
-            )
-            return False
-        except (ValueError, KeyError, TypeError) as e:
-            logger.warning(
-                "Data error sending thread update notification to Feishu: %s", e
-            )
-            return False
+        return await self._post_webhook(
+            overview_data.card, "thread update notification"
+        )
 
     async def send_thread_update_notification(
         self, channel_id: str, thread_id: str, platform_message_id: Optional[str] = None

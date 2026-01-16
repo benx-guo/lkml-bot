@@ -46,3 +46,20 @@ class FeishuRenderedThreadNotification:
     """Feishu Thread 通知卡片渲染结果"""
 
     card: Dict  # Feishu 卡片 JSON
+
+
+@dataclass
+class DiscordRenderedReplyNotification:
+    """Discord Reply 通知渲染结果"""
+
+    title: str
+    description: str
+    url: Optional[str] = None
+    embed_color: int = 0x5865F2  # 默认蓝色
+
+
+@dataclass
+class FeishuRenderedReplyNotification:
+    """Feishu Reply 通知渲染结果"""
+
+    card: Dict  # Feishu 卡片 JSON

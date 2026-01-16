@@ -4,7 +4,7 @@
 发送由客户端负责。
 """
 
-from lkml.service.types import SubPatchOverviewData, ThreadOverviewData
+from lkml.service.types import ThreadOverviewData
 
 from ..types import FeishuRenderedThreadNotification
 
@@ -118,18 +118,18 @@ class FeishuThreadOverviewRenderer:  # pylint: disable=too-few-public-methods
         return FeishuRenderedThreadNotification(card=card)
 
     def render_update_notification(
-        self, sub_overview: SubPatchOverviewData
+        self, overview_data: ThreadOverviewData
     ) -> FeishuRenderedThreadNotification:
         """渲染 Thread 更新通知卡片（不发送）
 
         Args:
-            sub_overview: 子补丁概览数据
+            overview_data: 线程概览数据
 
         Returns:
             FeishuRenderedThreadNotification 渲染结果
         """
-        subj = sub_overview.patch.subject[:200]
-        link = sub_overview.patch.url or ""
+        subj = overview_data.patch_card.subject[:200]
+        link = overview_data.patch_card.url or ""
 
         card = {
             "msg_type": "interactive",

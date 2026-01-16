@@ -194,3 +194,27 @@ class FilterConfigRepository:
             enabled,
             "独占模式：True=只允许匹配的创建，False=所有都创建但高亮匹配的",
         )
+
+    async def get_auto_watch_enabled(self) -> bool:
+        """获取自动 watch 配置
+
+        Returns:
+            是否启用自动 watch，默认 False
+        """
+        value = await self.get("reply_auto_watch", False)
+        return bool(value)
+
+    async def set_auto_watch_enabled(self, enabled: bool) -> FilterConfigData:
+        """设置自动 watch 配置
+
+        Args:
+            enabled: 是否启用自动 watch
+
+        Returns:
+            配置数据
+        """
+        return await self.set(
+            "reply_auto_watch",
+            enabled,
+            "自动 watch：True=满足规则自动 watch，False=关闭",
+        )

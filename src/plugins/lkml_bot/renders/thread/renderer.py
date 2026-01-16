@@ -58,17 +58,8 @@ class ThreadOverviewRenderer:
 
         # 使用 service 层准备好的 sub_patch_overviews
         if overview_data.sub_patch_overviews:
-            for sub_overview in overview_data.sub_patch_overviews:
-                patch = sub_overview.patch
-                patch_index = patch.patch_index
-
-                # 渲染子 PATCH 消息
-                patch_content = self._render_sub_patch(sub_overview)
-                patch_content += "\n\n---\n"
-
-                messages[patch_index] = DiscordRenderedThreadMessage(
-                    content=patch_content, embed=None
-                )
+            content = self.render_overview_message(overview_data).content
+            messages[0] = DiscordRenderedThreadMessage(content=content, embed=None)
 
         return DiscordRenderedThreadOverview(messages=messages)
 
@@ -84,7 +75,13 @@ class ThreadOverviewRenderer:
             DiscordRenderedThreadMessage 渲染结果
         """
         content = self._render_sub_patch(sub_overview)
-        content += "\n\n---\n"
+        return DiscordRenderedThreadMessage(content=content, embed=None)
+
+    def render_overview_message(
+        self, overview_data: ThreadOverviewData
+    ) -> DiscordRenderedThreadMessage:
+        """渲染 Thread Overview 为单条消息（用于更新）"""
+        content = self._render_overview_content(overview_data)
         return DiscordRenderedThreadMessage(content=content, embed=None)
 
     def _render_sub_patch(self, sub_overview: SubPatchOverviewData) -> str:
@@ -127,6 +124,17 @@ class ThreadOverviewRenderer:
             lines.append("_(No replies)_")
 
         return "\n".join(lines)
+
+    def _render_overview_content(self, overview_data: ThreadOverviewData) -> str:
+        """渲染所有子 PATCH 概览为单条消息内容"""
+        if not overview_data.sub_patch_overviews:
+            return ""
+
+        blocks = [
+            self._render_sub_patch(sub_overview)
+            for sub_overview in overview_data.sub_patch_overviews
+        ]
+        return "\n".join(blocks)
 
     def _format_reply_tree(
         self, reply: FeedMessage, reply_map: Dict[str, ReplyMapEntry], level: int

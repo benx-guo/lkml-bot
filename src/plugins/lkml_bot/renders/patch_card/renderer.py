@@ -124,3 +124,67 @@ class PatchCardRenderer:
         lines.append("```")
 
         return "\n".join(lines)
+
+    def render_reply_notification(self, payload: dict):
+        """渲染 Reply 通知为 Discord 格式（不发送）
+
+        Args:
+            payload: Reply 通知数据
+                - reply_author: 回复作者
+                - reply_subject: 回复主题
+                - reply_url: 回复链接
+                - root_subject: 根 Patch 主题
+                - root_url: 根 Patch 链接
+
+        Returns:
+            DiscordRenderedReplyNotification 渲染结果
+        """
+        from ..types import DiscordRenderedReplyNotification
+
+        reply_author = payload.get("reply_author") or "unknown"
+        reply_subject = payload.get("reply_subject") or ""
+        reply_url = payload.get("reply_url")
+        reply_subsystem = payload.get("reply_subsystem") or ""
+        reply_date = payload.get("reply_date") or ""
+        root_subject = payload.get("root_subject") or ""
+        root_url = payload.get("root_url")
+
+        # 标题（使用 subject 名称，可点击链接）
+        if reply_subject:
+            title = reply_subject
+        else:
+            title = f"[Reply from {reply_author}]"
+
+        lines = []
+
+        # 信息框（YAML 格式，只显示 Subsystem、Date、Author - 都是 reply 的信息）
+        lines.append("```yaml")
+        if reply_subsystem:
+            lines.append(f"Subsystem: {reply_subsystem}")
+        if reply_date:
+            lines.append(f"Date: {reply_date}")
+        lines.append(f"Author: {reply_author}")
+        lines.append("```")
+
+        # Reply Subject 和 Root Patch 显示在 YAML 模块外（换行显示）
+        if reply_subject:
+            lines.append("Reply Subject:")
+            if reply_url:
+                lines.append(f"[{reply_subject}]({reply_url})")
+            else:
+                lines.append(reply_subject)
+        if root_subject:
+            lines.append("Root Patch:")
+            if root_url:
+                lines.append(f"[{root_subject}]({root_url})")
+            else:
+                lines.append(root_subject)
+
+        description = "\n".join(lines)
+
+        return DiscordRenderedReplyNotification(
+            title=title,
+            description=description,
+            url=reply_url,
+            embed_color=0x5865F2,  # 蓝色（参考第一张图）
+        )

@@ -15,6 +15,7 @@ from nonebot.log import logger
 from lkml.service import PatchCard
 
 from .client.discord_client import DiscordClient
+from .client.discord_channel import send_channel_embed
 from .client.feishu_client import FeishuClient
 from .renders.patch_card.renderer import PatchCardRenderer
 from .renders.patch_card.feishu_render import FeishuPatchCardRenderer
@@ -88,3 +89,50 @@ class MultiPlatformPatchCardSender:  # pylint: disable=too-few-public-methods
             logger.warning(f"Error sending PATCH card to Feishu: {e}", exc_info=True)
 
         return platform_message_id, platform_channel_id
+
+    async def send_reply_notification(self, payload: dict) -> None:
+        """发送 Reply 视角通知消息到各平台"""
+        # 1) Discord：发送 embed 到频道
+        try:
+            channel_id = getattr(
+                getattr(self.discord_client, "config", None),
+                "platform_channel_id",
+                "",
+            )
+            if not channel_id:
+                logger.warning(
+                    "Discord channel ID not configured for reply notification"
+                )
+            else:
+                # 使用 Discord renderer 渲染
+                discord_rendered = self.discord_renderer.render_reply_notification(
+                    payload
+                )
+                message_id = await send_channel_embed(
+                    self.discord_client.config,
+                    discord_rendered.title,
+                    discord_rendered.description,
+                    url=discord_rendered.url,
+                    color=discord_rendered.embed_color,
+                )
+                if message_id:
+                    logger.info("Sent reply notification to Discord: %s", message_id)
+                else:
+                    logger.warning("Failed to send reply notification to Discord")
+        except Exception as e:  # pylint: disable=broad-except
+            logger.error(
+                "Error sending reply notification to Discord: %s", e, exc_info=True
+            )
+
+        # 2) Feishu：发送卡片消息
+        try:
+            # 使用 Feishu renderer 渲染
+            feishu_rendered = self.feishu_renderer.render_reply_notification(payload)
+            # render_reply_notification 返回的 card 已经包含完整结构，直接发送
+            success = await self.feishu_client.send_webhook_payload(
+                feishu_rendered.card, "reply notification"
+            )
+            if not success:
+                logger.warning("Reply notification not sent to Feishu")
+        except Exception as e:  # pylint: disable=broad-except
+            logger.warning("Error sending reply notification to Feishu: %s", e)
