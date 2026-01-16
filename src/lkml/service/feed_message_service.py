@@ -9,6 +9,8 @@
 - Service 层负责业务逻辑（PatchCardService, ThreadService, FeedMessageService）
 """
 
+# pylint: disable=too-many-lines
+
 import logging
 from typing import Optional
 
@@ -341,14 +343,17 @@ class FeedMessageService:
             session, feed_message
         )
 
-        if not patch_card or not thread or not thread.is_active:
+        # 已建立并激活 Thread：保持现状，仅更新 Thread
+        if patch_card and thread and thread.is_active:
+            # 更新 Thread：如果是多消息模式，只更新对应的子 PATCH 消息
+            # 传入 session 以确保能查询到新保存的 REPLY（还在同一事务中）
+            await self._update_thread_with_reply(
+                session, thread, patch_card, feed_message.in_reply_to_header
+            )
             return
 
-        # 更新 Thread：如果是多消息模式，只更新对应的子 PATCH 消息
-        # 传入 session 以确保能查询到新保存的 REPLY（还在同一事务中）
-        await self._update_thread_with_reply(
-            session, thread, patch_card, feed_message.in_reply_to_header
-        )
+        # Reply Perspective：未建立 Thread 或无卡片时的补充处理
+        await self._process_reply_perspective(session, feed_message, patch_card)
 
     async def _find_patch_card_and_thread_for_reply(
         self, session: AsyncSession, feed_message: FeedMessageData
@@ -439,6 +444,266 @@ class FeedMessageService:
             )
 
         return patch_card
+
+    async def _process_reply_perspective(
+        self,
+        session: AsyncSession,
+        reply_message: FeedMessageData,
+        existing_patch_card: Optional[PatchCard],
+    ) -> None:
+        """Reply Perspective 处理逻辑
+
+        规则：
+        - 如果 Reply 对应的 Patch 已建立 Thread（has_thread=True），不做额外处理
+        - 如果 Patch Card 不存在：根据过滤规则创建并推送 Patch Card，然后自动 watch
+        - 如果 Patch Card 已存在但未 watch：自动 watch
+        """
+        try:
+            patch_context = await self._build_reply_patch_context(
+                session, reply_message
+            )
+            if not patch_context:
+                return
+
+            target_patch, patch_info, service_feed_message, matched_filters = (
+                patch_context
+            )
+
+            if matched_filters:
+                service_feed_message.matched_filters = matched_filters
+
+            patch_card = await self._get_existing_patch_card_for_reply(
+                session, existing_patch_card, target_patch
+            )
+
+            if patch_card and patch_card.has_thread:
+                return
+
+            # Patch Card 不存在：创建并推送，然后自动 watch
+            if not patch_card:
+                created_card = await self._create_and_send_patch_card(  # pylint: disable=too-many-arguments
+                    session,
+                    target_patch,
+                    service_feed_message,
+                    patch_info,
+                    target_patch.series_message_id,
+                )
+                if created_card:
+                    logger.info(
+                        "Created PATCH card via reply perspective: %s",
+                        target_patch.message_id_header,
+                    )
+                    await self._auto_watch_patch_card(session, created_card)
+                return
+
+            # Patch Card 已存在但未 watch：自动 watch
+            await self._auto_watch_patch_card(session, patch_card)
+        except (RuntimeError, ValueError, AttributeError) as e:
+            logger.error(
+                "Failed to process reply perspective: %s",
+                e,
+                exc_info=True,
+            )
+
+    async def _build_reply_patch_context(
+        self, session: AsyncSession, reply_message: FeedMessageData
+    ) -> Optional[tuple[FeedMessageData, object, ServiceFeedMessage, list[str]]]:
+        """构建 Reply 视角处理上下文（目标 Patch + 过滤信息）"""
+        target_patch = await self._resolve_patch_feed_message_for_reply(
+            session, reply_message
+        )
+        if not target_patch or not target_patch.subject:
+            return None
+
+        from ..feed.feed_message_classifier import parse_patch_subject
+
+        patch_info = parse_patch_subject(target_patch.subject)
+        if not patch_info or not patch_info.is_patch:
+            return None
+
+        # Reply 视角过滤：使用 reply 内容判断是否命中规则
+        filter_message = self._convert_to_service_feed_message(
+            reply_message, patch_info, target_patch.series_message_id
+        )
+        should_create, matched_filters = await self._should_create_patch_card(
+            session, filter_message, patch_info
+        )
+        if not should_create:
+            return None
+        if not matched_filters:
+            # Reply 视角必须命中过滤规则才触发 auto-watch
+            return None
+
+        # Patch Card 创建数据仍使用 Patch 本身
+        service_feed_message = self._convert_to_service_feed_message(
+            target_patch, patch_info, target_patch.series_message_id
+        )
+
+        return target_patch, patch_info, service_feed_message, matched_filters
+
+    async def _get_existing_patch_card_for_reply(
+        self,
+        session: AsyncSession,
+        existing_patch_card: Optional[PatchCard],
+        target_patch: FeedMessageData,
+    ) -> Optional[PatchCard]:
+        """获取 Reply 对应的 PatchCard"""
+        if existing_patch_card:
+            return existing_patch_card
+
+        from .helpers import create_repositories_and_services
+
+        (_, _, _, patch_card_service, _) = create_repositories_and_services(session)
+        return await self._find_patch_card_for_feed_message(
+            patch_card_service, target_patch
+        )
+
+    async def _resolve_patch_feed_message_for_reply(
+        self, session: AsyncSession, reply_message: FeedMessageData
+    ) -> Optional[FeedMessageData]:
+        """解析 Reply 对应的 Patch feed_message（Cover Letter 或 Single Patch）"""
+        if not reply_message.in_reply_to_header:
+            return None
+
+        feed_message_repo = FeedMessageRepository(session)
+        from .thread_service import _extract_message_id_from_header
+
+        async def find_patch_in_chain(
+            message_id_header: str,
+        ) -> Optional[FeedMessageData]:
+            current_raw = message_id_header
+            visited: set[str] = set()
+            depth = 0
+
+            while current_raw and depth < 30:
+                current_id = _extract_message_id_from_header(current_raw)
+                if not current_id or current_id in visited:
+                    break
+                visited.add(current_id)
+
+                msg = await feed_message_repo.find_by_message_id_header(current_id)
+                if not msg:
+                    return None
+
+                if msg.is_patch and not msg.is_reply:
+                    if (
+                        msg.is_series_patch
+                        and not msg.is_cover_letter
+                        and msg.series_message_id
+                    ):
+                        cover = await feed_message_repo.find_by_message_id_header(
+                            msg.series_message_id
+                        )
+                        if cover and cover.is_patch and not cover.is_reply:
+                            return cover
+                    return msg
+
+                current_raw = msg.in_reply_to_header
+                depth += 1
+            return None
+
+        parent = await feed_message_repo.find_by_message_id_header(
+            _extract_message_id_from_header(reply_message.in_reply_to_header)
+            or reply_message.in_reply_to_header
+        )
+
+        # 优先沿 in-reply-to 链找到真正的 PATCH
+        resolved = await find_patch_in_chain(reply_message.in_reply_to_header)
+        if resolved:
+            return resolved
+
+        # 回复到 REPLY：尝试通过 series_message_id 找到根 PATCH
+        series_id = reply_message.series_message_id or (
+            parent.series_message_id if parent else None
+        )
+        if series_id:
+            root = await feed_message_repo.find_by_message_id_header(series_id)
+            if root and root.is_patch and not root.is_reply:
+                return root
+
+        return None
+
+    async def _find_patch_card_for_feed_message(
+        self, patch_card_service: PatchCardService, patch_message: FeedMessageData
+    ) -> Optional[PatchCard]:
+        """根据 Patch feed_message 查找 PatchCard"""
+        patch_card = await patch_card_service.find_by_message_id_header(
+            patch_message.message_id_header
+        )
+        if patch_card:
+            return patch_card
+        if patch_message.series_message_id:
+            return await patch_card_service.find_series_patch_card(
+                patch_message.series_message_id
+            )
+        return None
+
+    async def _auto_watch_patch_card(
+        self, session: AsyncSession, patch_card: PatchCard
+    ) -> None:
+        """自动创建 Thread 并标记 watch 状态"""
+        if not self.thread_sender:
+            logger.debug("Thread sender not configured, skip auto watch")
+            return
+
+        if not patch_card.platform_message_id:
+            logger.warning(
+                "Patch card has no platform_message_id, cannot create thread: %s",
+                patch_card.message_id_header,
+            )
+            return
+
+        from .helpers import create_repositories_and_services
+
+        (_, _, _, patch_card_service, thread_service) = (
+            create_repositories_and_services(session)
+        )
+
+        existing_thread = await thread_service.find_by_message_id_header(
+            patch_card.message_id_header
+        )
+        if existing_thread and existing_thread.is_active:
+            if not patch_card.has_thread:
+                await patch_card_service.mark_as_has_thread(
+                    patch_card.message_id_header
+                )
+            return
+
+        overview_data = await thread_service.prepare_thread_overview_data(
+            patch_card.message_id_header
+        )
+        if not overview_data:
+            logger.warning(
+                "Failed to prepare thread overview data for auto watch: %s",
+                patch_card.message_id_header,
+            )
+            return
+
+        thread_name = patch_card.subject[:100]
+        thread_id, sub_patch_messages = (
+            await self.thread_sender.create_thread_and_send_overview(
+                thread_name, patch_card.platform_message_id, overview_data
+            )
+        )
+
+        if not thread_id:
+            logger.warning(
+                "Failed to create thread for auto watch: %s",
+                patch_card.message_id_header,
+            )
+            return
+
+        await thread_service.create(
+            patch_card.message_id_header,
+            thread_id,
+            thread_name,
+        )
+        if sub_patch_messages:
+            await thread_service.update_sub_patch_messages(
+                thread_id, sub_patch_messages
+            )
+
+        await patch_card_service.mark_as_has_thread(patch_card.message_id_header)
 
     async def _send_thread_update_notification(
         self, thread: PatchThread, patch_card: PatchCard
@@ -668,12 +933,15 @@ class FeedMessageService:
         if not in_reply_to:
             return None, None
 
+        target_patch = None
+        target_patch_index = None
+
         # 单 Patch：直接匹配
         if not patch_card.is_series_patch:
             if patch_card.message_id_header in in_reply_to:
-                single_patch = build_single_patch_info(patch_card)
-                return single_patch, 1
-            return None, None
+                target_patch = build_single_patch_info(patch_card)
+                target_patch_index = 1
+            return target_patch, target_patch_index
 
         # Series Patch：首先检查是否回复 Cover Letter
         if patch_card.message_id_header in in_reply_to:
@@ -681,22 +949,26 @@ class FeedMessageService:
             if patch_card.series_patches:
                 for patch in patch_card.series_patches:
                     if patch.patch_index == 0:  # Cover Letter
-                        return patch, 0
+                        target_patch = patch
+                        target_patch_index = 0
+                        break
             # 如果找不到 Cover Letter 的 patch，使用 patch_card 构建一个
             # 这种情况不应该发生，但为了健壮性，我们处理它
-            logger.warning(
-                f"Cover Letter patch not found in series_patches for {patch_card.message_id_header}, "
-                f"using patch_card to build patch info"
-            )
-            from .types import SeriesPatchInfo
-            cover_patch = SeriesPatchInfo(
-                subject=patch_card.subject,
-                patch_index=0,
-                patch_total=patch_card.patch_total or 1,
-                message_id=patch_card.message_id_header,
-                url=patch_card.url or "",
-            )
-            return cover_patch, 0
+            if not target_patch:
+                logger.warning(
+                    f"Cover Letter patch not found in series_patches for {patch_card.message_id_header}, "
+                    f"using patch_card to build patch info"
+                )
+                target_patch = SeriesPatchInfo(
+                    subject=patch_card.subject,
+                    patch_index=0,
+                    patch_total=patch_card.patch_total or 1,
+                    message_id=patch_card.message_id_header,
+                    url=patch_card.url or "",
+                )
+                target_patch_index = 0
+
+            return target_patch, target_patch_index
 
         # Series Patch：查找匹配的子 Patch
         if patch_card.series_patches:
@@ -704,9 +976,11 @@ class FeedMessageService:
                 if patch.patch_index == 0:  # 跳过 Cover Letter
                     continue
                 if patch.message_id and patch.message_id in in_reply_to:
-                    return patch, patch.patch_index
+                    target_patch = patch
+                    target_patch_index = patch.patch_index
+                    break
 
-        return None, None
+        return target_patch, target_patch_index
 
     async def _prepare_patch_overview_data(self, session: AsyncSession, target_patch):
         """准备 Patch 的 overview 数据
