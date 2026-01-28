@@ -133,8 +133,8 @@ class FeedProcessor:
 
             if entry_dt > self.last_update_dt:
                 entries.append(entry)
-            else:
-                break
+            # 不使用 break，继续检查所有条目
+            # lore.kernel.org 的 feed 不保证严格按时间递减排序
         return entries
 
     def get_feed_entries(self, feed_url: str) -> List[FeedParserDict]:
