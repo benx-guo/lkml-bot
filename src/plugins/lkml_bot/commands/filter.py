@@ -61,6 +61,7 @@ def _build_help_embed() -> dict:
 
 **配置管理**
 • `config exclusive <on|off>` - 设置独占模式（全局配置）
+• `config auto_watch <on|off>` - 设置自动 watch（全局配置）
 
 **示例**
 ```
@@ -409,15 +410,23 @@ async def _handle_rule_list(filter_service: PatchCardFilterService) -> str:
         if not rule_groups:
             return "📋 没有找到规则组"
 
-        # 获取全局独占模式配置
+        # 获取全局配置
         exclusive_mode = False
+        auto_watch_enabled = False
         if filter_service.filter_config_repo:
             exclusive_mode = (
                 await filter_service.filter_config_repo.get_exclusive_mode()
             )
+            auto_watch_enabled = (
+                await filter_service.filter_config_repo.get_auto_watch_enabled()
+            )
 
         global_mode = "🔒 独占模式" if exclusive_mode else "⭐ 高亮模式"
-        lines = [f"规则组列表 (全局模式: {global_mode}):\n"]
+        auto_watch_text = "✅ 开启" if auto_watch_enabled else "❌ 关闭"
+        lines = [
+            f"规则组列表 (全局模式: {global_mode}):",
+            f"自动 watch: {auto_watch_text}\n",
+        ]
         for group_name in rule_groups:
             filter_data = await filter_service.get_rule_group(group_name)
             if filter_data:
@@ -444,11 +453,15 @@ async def _handle_rule_show(filter_service: PatchCardFilterService, parts: list)
         if not filter_data:
             return f"❌ 未找到规则组: {name}"
 
-        # 获取全局独占模式配置
+        # 获取全局配置
         exclusive_mode = False
+        auto_watch_enabled = False
         if filter_service.filter_config_repo:
             exclusive_mode = (
                 await filter_service.filter_config_repo.get_exclusive_mode()
+            )
+            auto_watch_enabled = (
+                await filter_service.filter_config_repo.get_auto_watch_enabled()
             )
 
         status = "✅ 启用" if filter_data.enabled else "❌ 禁用"
@@ -457,10 +470,12 @@ async def _handle_rule_show(filter_service: PatchCardFilterService, parts: list)
             if exclusive_mode
             else "⭐ 高亮模式（所有都创建但高亮匹配的）"
         )
+        auto_watch_text = "✅ 开启" if auto_watch_enabled else "❌ 关闭"
         lines = [
             f"规则组详情: {name}",
             f"状态: {status}",
             f"全局模式: {mode}",
+            f"自动 watch: {auto_watch_text}",
         ]
 
         if filter_data.created_by:
@@ -494,26 +509,36 @@ async def _handle_config(
     filter_service: PatchCardFilterService, parts: list, _user_id: str, _user_name: str
 ) -> str:
     """处理配置命令"""
+    error_message = None
     if len(parts) < 4:
-        return "❌ 用法: /filter config exclusive <on|off>"
+        error_message = "❌ 用法: /filter config <exclusive|auto_watch> <on|off>"
+    config_key = parts[2].lower() if len(parts) > 2 else ""
+    config_value = parts[3].lower() if len(parts) > 3 else ""
 
-    config_key = parts[2].lower()
-    config_value = parts[3].lower()
+    if not error_message and config_key not in ("exclusive", "auto_watch"):
+        error_message = (
+            f"❌ 未知配置项: {config_key}\n支持的配置项: exclusive, auto_watch"
+        )
+    if not error_message and config_value not in ("on", "off"):
+        error_message = "❌ 配置值必须是 on 或 off"
 
-    if config_key != "exclusive":
-        return f"❌ 未知配置项: {config_key}\n支持的配置项: exclusive"
-
-    if config_value not in ("on", "off"):
-        return "❌ 配置值必须是 on 或 off"
+    if error_message:
+        return error_message
 
     if not filter_service.filter_config_repo:
         return "❌ 配置仓储未初始化"
 
     try:
         enabled = config_value == "on"
-        await filter_service.filter_config_repo.set_exclusive_mode(enabled)
-        mode_text = "独占模式" if enabled else "高亮模式"
-        return f"✅ 已设置全局模式: {mode_text}"
+        if config_key == "exclusive":
+            await filter_service.filter_config_repo.set_exclusive_mode(enabled)
+            mode_text = "独占模式" if enabled else "高亮模式"
+            result = f"✅ 已设置全局模式: {mode_text}"
+        else:
+            await filter_service.filter_config_repo.set_auto_watch_enabled(enabled)
+            state_text = "开启" if enabled else "关闭"
+            result = f"✅ 已设置自动 watch: {state_text}"
+        return result
     except (RuntimeError, ValueError, AttributeError) as e:
         logger.error(f"Failed to set config: {e}", exc_info=True)
         return f"❌ 设置配置失败: {str(e)}"

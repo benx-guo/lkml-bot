@@ -12,7 +12,7 @@ from typing import Dict, Optional, Tuple
 
 from nonebot.log import logger
 
-from lkml.service.types import SubPatchOverviewData, ThreadOverviewData
+from lkml.service.types import ThreadOverviewData
 
 from .client.discord_client import DiscordClient
 from .client.feishu_client import FeishuClient
@@ -99,14 +99,14 @@ class MultiPlatformThreadSender:  # pylint: disable=too-few-public-methods
         self,
         thread_id: str,
         message_id: str,
-        sub_overview: SubPatchOverviewData,
+        overview_data: ThreadOverviewData,
     ) -> bool:
         """更新 Thread Overview
 
         Args:
             thread_id: Discord Thread ID
             message_id: 要更新的消息 ID
-            sub_overview: 子 PATCH Overview 数据
+            overview_data: Thread Overview 数据
 
         Returns:
             成功返回 True，失败返回 False
@@ -115,7 +115,9 @@ class MultiPlatformThreadSender:  # pylint: disable=too-few-public-methods
 
         # 1) Discord：更新 Thread 消息
         try:
-            discord_rendered = self.discord_renderer.render_sub_patch(sub_overview)
+            discord_rendered = self.discord_renderer.render_overview_message(
+                overview_data
+            )
             success = await self.discord_client.update_thread_overview(
                 thread_id, message_id, discord_rendered
             )
@@ -131,7 +133,7 @@ class MultiPlatformThreadSender:  # pylint: disable=too-few-public-methods
         # 2) Feishu：发送 Thread 更新通知卡片
         try:
             feishu_rendered = self.feishu_renderer.render_update_notification(
-                sub_overview
+                overview_data
             )
             await self.feishu_client.update_thread_overview("", "", feishu_rendered)
         except Exception as e:  # pylint: disable=broad-except

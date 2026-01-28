@@ -540,7 +540,7 @@ class ThreadService:
             return []
 
     async def prepare_thread_overview_data(
-        self, message_id_header: str
+        self, message_id_header: str, patch_card_service=None
     ) -> Optional[ThreadOverviewData]:
         """准备 Thread Overview 渲染数据（供 Plugins 层使用）
 
@@ -550,6 +550,7 @@ class ThreadService:
 
         Args:
             message_id_header: PATCH message_id_header（Cover Letter 或单 Patch）
+            patch_card_service: 可选的 PatchCardService 实例（用于复用 session）
 
         Returns:
             ThreadOverviewData，如果不存在返回 None
@@ -561,10 +562,17 @@ class ThreadService:
 
         try:
             # 1. 获取 PatchCard（包含 series_patches）
-            async with get_patch_card_service() as patch_card_service:
+            if patch_card_service:
+                # 使用传入的 service（复用 session）
                 patch_card = await patch_card_service.get_patch_card_with_series_data(
                     message_id_header
                 )
+            else:
+                # 创建新的 service（使用新的 session）
+                async with get_patch_card_service() as service:
+                    patch_card = await service.get_patch_card_with_series_data(
+                        message_id_header
+                    )
 
             if not patch_card:
                 logger.warning(f"PatchCard not found: {message_id_header}")

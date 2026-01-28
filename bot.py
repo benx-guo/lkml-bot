@@ -29,9 +29,7 @@ if not getattr(driver, "_adapters", None):
     # 优先使用兼容性适配器，如果导入失败则使用原始适配器
     try:
         try:
-            from plugins.lkml_bot.adapters.discord_compat_adapter import (
-                CompatibleDiscordAdapter,
-            )
+            from compat.discord_compat_adapter import CompatibleDiscordAdapter
 
             driver.register_adapter(CompatibleDiscordAdapter)
             logger.info(
