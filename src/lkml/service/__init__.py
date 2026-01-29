@@ -18,6 +18,7 @@ from .types import (
     PatchCard,
     FeedMessage,
     PatchThread,
+    ThreadNode,
     ThreadOverviewData,
 )
 from .query_service import QueryService, query_service
@@ -67,6 +68,7 @@ __all__ = [
     "PatchCard",
     "FeedMessage",
     "PatchThread",
+    "ThreadNode",
     "ThreadOverviewData",
     # 回复处理辅助函数
     "parse_reply_time",

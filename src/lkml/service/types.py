@@ -93,10 +93,22 @@ class PatchThread:
     thread_id: str
     thread_name: str
     is_active: bool = True
-    sub_patch_messages: Optional[Dict[int, str]] = None  # {patch_index: message_id}
     overview_message_id: Optional[str] = None
+    sub_patch_messages: Optional[Dict[str, str]] = None
     created_at: Optional[datetime] = None
     archived_at: Optional[datetime] = None
+
+
+@dataclass
+class ThreadNode:
+    """Thread 层级树节点
+
+    表示邮件讨论树中的一个节点
+    """
+
+    message: "FeedMessage"  # 消息内容
+    children: List["ThreadNode"]  # 子节点列表
+    node_type: str  # "cover_letter" | "sub_patch" | "reply"
 
 
 @dataclass
@@ -144,8 +156,10 @@ class ThreadOverviewData:
     """
 
     patch_card: PatchCard  # PatchCard 信息（包含 series_patches）
-    replies: List[FeedMessage]  # 所有回复列表
-    reply_hierarchy: ReplyHierarchy  # 回复层级结构
+    root: Optional["ThreadNode"] = None  # 新版：完整层级树
+    # 保留旧字段用于向后兼容
+    replies: Optional[List[FeedMessage]] = None  # 所有回复列表
+    reply_hierarchy: Optional[ReplyHierarchy] = None  # 回复层级结构
     sub_patch_overviews: Optional[List[SubPatchOverviewData]] = (
         None  # 每个子 PATCH 的独立 overview 数据（Series Patch 时使用）
     )

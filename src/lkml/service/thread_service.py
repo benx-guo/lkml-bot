@@ -1,7 +1,7 @@
 """Thread 服务
 
 封装 Thread 相关的数据库操作和内容处理，提供业务逻辑层接口。
-包括 Thread 的 CRUD 操作、回复处理、回复层级构建、PATCH 查找等功能。
+包括 Thread 的 CRUD 操作、回复处理、层级树构建等功能。
 Service 层通过依赖注入接受 Repository 实例。
 """
 
@@ -17,10 +17,12 @@ from ..db.repo import (
 )
 from .types import (
     PatchThread,
+    PatchCard,
     ThreadOverviewData,
+    ThreadNode,
+    FeedMessage,
     ReplyHierarchy,
     ReplyMapEntry,
-    FeedMessage,
 )
 
 logger = logging.getLogger(__name__)
@@ -539,14 +541,134 @@ class ThreadService:
             )
             return []
 
+    async def _get_all_messages_for_series(
+        self, patch_card: PatchCard
+    ) -> List[FeedMessage]:
+        """获取 series 的所有消息（Cover Letter、子 patches、所有回复）
+
+        Args:
+            patch_card: PatchCard 对象（包含 series_patches 信息）
+
+        Returns:
+            所有相关消息的列表
+        """
+        all_messages: List[FeedMessage] = []
+        seen_message_ids: set = set()
+
+        # 收集所有需要查找回复的 message_id
+        message_ids_to_collect = []
+
+        # 添加 Cover Letter / 根消息
+        message_ids_to_collect.append(patch_card.message_id_header)
+
+        # 添加所有子 patches
+        if patch_card.series_patches:
+            for sub_patch in patch_card.series_patches:
+                if sub_patch.message_id not in seen_message_ids:
+                    message_ids_to_collect.append(sub_patch.message_id)
+
+        # 对每个消息收集其所有回复
+        for msg_id in message_ids_to_collect:
+            # 获取该消息本身
+            msg_data = await self.feed_message_repo.find_by_message_id_header(msg_id)
+            if msg_data and msg_id not in seen_message_ids:
+                all_messages.append(self._repo_data_to_service_feed_message(msg_data))
+                seen_message_ids.add(msg_id)
+
+            # 获取该消息的所有回复
+            replies = await self.get_all_replies_for_patch(msg_id)
+            for reply in replies:
+                if reply.message_id_header not in seen_message_ids:
+                    all_messages.append(reply)
+                    seen_message_ids.add(reply.message_id_header)
+
+        return all_messages
+
+    def _build_thread_tree(
+        self,
+        root_message: FeedMessage,
+        all_messages: List[FeedMessage],
+        patch_card: PatchCard,
+    ) -> ThreadNode:
+        """构建完整的 Thread 层级树
+
+        Args:
+            root_message: 根消息（Cover Letter 或单 Patch）
+            all_messages: 所有相关消息列表
+            patch_card: PatchCard 对象
+
+        Returns:
+            ThreadNode 层级树根节点
+        """
+        # 构建消息映射 {message_id: FeedMessage}
+        message_map: Dict[str, FeedMessage] = {
+            msg.message_id_header: msg for msg in all_messages
+        }
+
+        # 构建子 patch message_id 集合
+        sub_patch_ids: set = set()
+        if patch_card.series_patches:
+            for sub_patch in patch_card.series_patches:
+                sub_patch_ids.add(sub_patch.message_id)
+
+        # 构建 {parent_id: [children]} 映射
+        children_map: Dict[str, List[FeedMessage]] = {}
+        for msg in all_messages:
+            if msg.message_id_header == root_message.message_id_header:
+                continue  # 跳过根消息
+
+            parent_id = _extract_message_id_from_header(msg.in_reply_to_header)
+
+            # 确定父节点
+            if parent_id and parent_id in message_map:
+                actual_parent = parent_id
+            elif msg.message_id_header in sub_patch_ids:
+                # 子 patch 直接挂在根节点下
+                actual_parent = root_message.message_id_header
+            else:
+                # 无法确定父节点，挂在根节点下
+                actual_parent = root_message.message_id_header
+
+            if actual_parent not in children_map:
+                children_map[actual_parent] = []
+            children_map[actual_parent].append(msg)
+
+        # 对每个父节点的子节点按时间排序
+        for parent_id in children_map:
+            children_map[parent_id].sort(
+                key=lambda m: m.received_at or datetime.min
+            )
+
+        def _determine_node_type(msg: FeedMessage) -> str:
+            """确定节点类型"""
+            if msg.message_id_header == root_message.message_id_header:
+                if patch_card.is_cover_letter:
+                    return "cover_letter"
+                return "sub_patch"  # 单 patch 作为 sub_patch 类型
+            if msg.message_id_header in sub_patch_ids:
+                return "sub_patch"
+            return "reply"
+
+        def _build_node(msg: FeedMessage) -> ThreadNode:
+            """递归构建节点"""
+            children_msgs = children_map.get(msg.message_id_header, [])
+            children_nodes = [_build_node(child) for child in children_msgs]
+            return ThreadNode(
+                message=msg,
+                children=children_nodes,
+                node_type=_determine_node_type(msg),
+            )
+
+        return _build_node(root_message)
+
     async def prepare_thread_overview_data(
         self, message_id_header: str, patch_card_service=None
     ) -> Optional[ThreadOverviewData]:
         """准备 Thread Overview 渲染数据（供 Plugins 层使用）
 
-        统一处理单 Patch 和 Series Patch：
-        - 单 Patch：为该 Patch 准备所有 REPLY 数据（包括 REPLY 的 REPLY）
-        - Series Patch：以子 Patch 为单位，每个子 Patch 和单 Patch 的逻辑一致
+        构建完整的 Thread 层级树：
+        - Series Patch: Cover Letter 为根，子 patches 和回复为子节点
+        - 单 Patch: 该 Patch 为根，所有回复为子节点
 
         Args:
             message_id_header: PATCH message_id_header（Cover Letter 或单 Patch）
@@ -556,19 +678,14 @@ class ThreadService:
             ThreadOverviewData，如果不存在返回 None
         """
         from ..db.database import get_patch_card_service
-        from .helpers import build_single_patch_info
-
-        # ThreadOverviewData 已在模块顶部导入
 
         try:
             # 1. 获取 PatchCard（包含 series_patches）
             if patch_card_service:
-                # 使用传入的 service（复用 session）
                 patch_card = await patch_card_service.get_patch_card_with_series_data(
                     message_id_header
                 )
             else:
-                # 创建新的 service（使用新的 session）
                 async with get_patch_card_service() as service:
                     patch_card = await service.get_patch_card_with_series_data(
                         message_id_header
@@ -578,35 +695,25 @@ class ThreadService:
                 logger.warning(f"PatchCard not found: {message_id_header}")
                 return None
 
-            # 2. 确定要处理的 Patch 列表
-            if patch_card.is_series_patch and patch_card.series_patches:
-                # Series Patch：处理所有子 Patch
-                patches_to_process = list(patch_card.series_patches)
-            else:
-                # 单 Patch：构建 SeriesPatchInfo 对象
-                single_patch = build_single_patch_info(patch_card)
-                patches_to_process = [single_patch]
-
-            if not patches_to_process:
-                logger.warning(
-                    f"No patches to process for message_id_header: {message_id_header}"
-                )
+            # 2. 获取根消息
+            root_msg_data = await self.feed_message_repo.find_by_message_id_header(
+                message_id_header
+            )
+            if not root_msg_data:
+                logger.warning(f"Root message not found: {message_id_header}")
                 return None
+            root_message = self._repo_data_to_service_feed_message(root_msg_data)
 
-            # 3. 为每个 Patch 准备独立的 overview 数据
-            sub_patch_overviews = []
-            for patch in patches_to_process:
-                overview = await self._prepare_single_patch_overview(patch)
-                if overview:
-                    sub_patch_overviews.append(overview)
+            # 3. 获取所有相关消息
+            all_messages = await self._get_all_messages_for_series(patch_card)
 
-            # 4. 构建 ThreadOverviewData
-            # 注意：replies 和 reply_hierarchy 字段保留用于兼容，但实际使用 sub_patch_overviews
+            # 4. 构建层级树
+            root_node = self._build_thread_tree(root_message, all_messages, patch_card)
+
+            # 5. 返回 ThreadOverviewData（使用新的 root 字段）
             return ThreadOverviewData(
                 patch_card=patch_card,
-                replies=[],  # 不再使用整体 replies
-                reply_hierarchy=None,  # 不再使用整体 reply_hierarchy
-                sub_patch_overviews=sub_patch_overviews,
+                root=root_node,
             )
 
         except (RuntimeError, ValueError, AttributeError) as e:
