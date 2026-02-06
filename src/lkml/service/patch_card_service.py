@@ -5,6 +5,7 @@ Service 层通过依赖注入接受 Repository 实例。
 """
 
 import logging
+from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Optional, List
 
 from .types import PatchCard, SeriesPatchInfo
@@ -259,6 +260,7 @@ class PatchCardService:
         platform_message_id: str,
         platform_channel_id: str,
         timeout_hours: int = 24,
+        summary: Optional[str] = None,
     ) -> Optional[PatchCard]:
         """创建 PatchCard（供 Plugins 层使用，包含所有业务逻辑）
 
@@ -279,11 +281,8 @@ class PatchCardService:
             创建的 PatchCard（包含 series_patches），失败返回 None
         """
         try:
-            from datetime import timedelta
-            from datetime import datetime as dt
-
             # 计算过期时间（业务逻辑）
-            expires_at = dt.utcnow() + timedelta(hours=timeout_hours)
+            expires_at = datetime.utcnow() + timedelta(hours=timeout_hours)
 
             # 判断是否是系列 PATCH（业务逻辑）
             is_series = feed_message.is_series_patch or (
@@ -316,6 +315,7 @@ class PatchCardService:
                 has_thread=False,
                 is_cover_letter=feed_message.is_cover_letter,
                 to_cc_list=to_cc_list,
+                summary=summary,
             )
 
             # 保存到数据库

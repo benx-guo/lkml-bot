@@ -118,18 +118,76 @@ class FeishuThreadOverviewRenderer:  # pylint: disable=too-few-public-methods
         return FeishuRenderedThreadNotification(card=card)
 
     def render_update_notification(
-        self, overview_data: ThreadOverviewData
+        self, overview_data: ThreadOverviewData, reply_summary: str = ""
     ) -> FeishuRenderedThreadNotification:
         """渲染 Thread 更新通知卡片（不发送）
 
         Args:
             overview_data: 线程概览数据
+            reply_summary: Reply 的 AI 摘要（可选）
 
         Returns:
             FeishuRenderedThreadNotification 渲染结果
         """
         subj = overview_data.patch_card.subject[:200]
         link = overview_data.patch_card.url or ""
+
+        # 构建 elements 列表
+        elements = []
+
+        # AI 摘要块（有时才显示）
+        if reply_summary:
+            elements.append(
+                {
+                    "tag": "column_set",
+                    "flex_mode": "stretch",
+                    "horizontal_spacing": "8px",
+                    "horizontal_align": "left",
+                    "columns": [
+                        {
+                            "tag": "column",
+                            "width": "weighted",
+                            "background_style": "grey-50",
+                            "elements": [
+                                {
+                                    "tag": "markdown",
+                                    "content": f"**AI Summary**\n{reply_summary}",
+                                    "text_align": "left",
+                                    "text_size": "normal",
+                                }
+                            ],
+                            "padding": "12px 12px 12px 12px",
+                            "vertical_spacing": "8px",
+                            "horizontal_align": "left",
+                            "vertical_align": "top",
+                            "weight": 1,
+                        }
+                    ],
+                    "margin": "0px 0px 0px 0px",
+                }
+            )
+
+        elements.append(
+            {
+                "tag": "button",
+                "text": {
+                    "tag": "plain_text",
+                    "content": "查看补丁详情",
+                },
+                "type": "primary_filled",
+                "width": "fill",
+                "behaviors": [
+                    {
+                        "type": "open_url",
+                        "default_url": link or "",
+                        "pc_url": "",
+                        "ios_url": "",
+                        "android_url": "",
+                    }
+                ],
+                "margin": "4px 0px 4px 0px",
+            },
+        )
 
         card = {
             "msg_type": "interactive",
@@ -154,27 +212,7 @@ class FeishuThreadOverviewRenderer:  # pylint: disable=too-few-public-methods
                 },
                 "body": {
                     "direction": "vertical",
-                    "elements": [
-                        {
-                            "tag": "button",
-                            "text": {
-                                "tag": "plain_text",
-                                "content": "查看补丁详情",
-                            },
-                            "type": "primary_filled",
-                            "width": "fill",
-                            "behaviors": [
-                                {
-                                    "type": "open_url",
-                                    "default_url": link or "",
-                                    "pc_url": "",
-                                    "ios_url": "",
-                                    "android_url": "",
-                                }
-                            ],
-                            "margin": "4px 0px 4px 0px",
-                        },
-                    ],
+                    "elements": elements,
                 },
             },
         }

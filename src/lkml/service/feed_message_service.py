@@ -51,16 +51,19 @@ class FeedMessageService:
         self,
         patch_card_sender=None,
         thread_sender=None,
+        summarizer=None,
     ):
         """初始化处理器
 
         Args:
             patch_card_sender: PatchCard 多平台发送服务
             thread_sender: Thread 多平台发送服务
+            summarizer: 可选的 AI 内容摘要服务
         """
         # 通过统一的多平台发送服务发送（由 Plugins 层注入）
         self.patch_card_sender = patch_card_sender
         self.thread_sender = thread_sender
+        self.summarizer = summarizer
 
     # ========== 公共方法 ==========
 
@@ -235,6 +238,14 @@ class FeedMessageService:
             )
         )
 
+        # AI 摘要（可选，失败时静默 fallback）
+        if self.summarizer and temp_patch_card.content:
+            summary = await self.summarizer.summarize(
+                temp_patch_card.content, temp_patch_card.subject
+            )
+            if summary:
+                temp_patch_card.summary = summary
+
         # 使用 PatchCard 发送服务（如果已注入）
         platform_message_id = None
         platform_channel_id = ""
@@ -262,7 +273,8 @@ class FeedMessageService:
 
         # 保存到数据库
         return await self._save_patch_card_to_database(
-            session, service_feed_message, platform_message_id, platform_channel_id
+            session, service_feed_message, platform_message_id, platform_channel_id,
+            summary=temp_patch_card.summary,
         )
 
     async def _get_series_patches_for_cover_letter(  # pylint: disable=too-many-arguments
@@ -322,7 +334,8 @@ class FeedMessageService:
         )
 
     async def _save_patch_card_to_database(
-        self, session, service_feed_message, platform_message_id, platform_channel_id
+        self, session, service_feed_message, platform_message_id, platform_channel_id,
+        summary=None,
     ):
         """保存 PATCH 卡片到数据库"""
         patch_card_repo = PatchCardRepository(session)
@@ -334,6 +347,7 @@ class FeedMessageService:
             platform_message_id=platform_message_id,
             platform_channel_id=platform_channel_id,
             timeout_hours=24,
+            summary=summary,
         )
 
     async def _process_reply_message(
@@ -363,7 +377,7 @@ class FeedMessageService:
             # 更新 Thread：如果是多消息模式，只更新对应的子 PATCH 消息
             # 传入 session 以确保能查询到新保存的 REPLY（还在同一事务中）
             await self._update_thread_with_reply(
-                session, thread, patch_card, feed_message.in_reply_to_header
+                session, thread, patch_card, feed_message
             )
             return
 
@@ -513,7 +527,7 @@ class FeedMessageService:
             if not patch_card:
                 return
 
-            await self._send_reply_notice(reply_message, target_patch)
+            await self._send_reply_notice(session, reply_message, target_patch)
 
             if await self._is_auto_watch_enabled(session, matched_filters):
                 await self._auto_watch_patch_card(session, patch_card)
@@ -589,7 +603,8 @@ class FeedMessageService:
         return await config_repo.get_auto_watch_enabled()
 
     async def _send_reply_notice(
-        self, reply_message: FeedMessageData, root_patch: FeedMessageData
+        self, session: AsyncSession, reply_message: FeedMessageData,
+        root_patch: FeedMessageData,
     ) -> None:
         """发送 Reply 视角通知消息"""
         if not self.patch_card_sender:
@@ -611,6 +626,22 @@ class FeedMessageService:
             "root_subject": root_patch.subject or "",
             "root_url": root_patch.url,
         }
+
+        # AI 摘要（可选，失败时静默 fallback）
+        summary = None
+        if self.summarizer and reply_message.content:
+            summary = await self.summarizer.summarize(
+                reply_message.content, reply_message.subject or "", is_reply=True
+            )
+        payload["reply_summary"] = summary or ""
+
+        # 持久化摘要到数据库
+        if summary and reply_message.message_id_header:
+            feed_message_repo = FeedMessageRepository(session)
+            await feed_message_repo.update_summary(
+                reply_message.message_id_header, summary
+            )
+
         await self.patch_card_sender.send_reply_notification(payload)
 
     async def _resolve_patch_feed_message_for_reply(
@@ -811,7 +842,7 @@ class FeedMessageService:
         session: AsyncSession,
         thread: PatchThread,
         patch_card: PatchCard,
-        in_reply_to_header: str,
+        reply_feed_message: FeedMessageData,
     ):
         """当 Reply 到达时，更新 Thread
 
@@ -821,14 +852,15 @@ class FeedMessageService:
             session: 数据库会话（用于查询，确保能查询到新保存的 REPLY）
             thread: Thread 对象
             patch_card: PATCH 卡片对象
-            in_reply_to_header: Reply 的 in_reply_to 头部
+            reply_feed_message: Reply 消息对象
         """
         if self.thread_sender:
             await self._update_thread_with_reply_via_thread_sender(
-                session, thread, patch_card, in_reply_to_header
+                session, thread, patch_card, reply_feed_message
             )
             return
 
+        in_reply_to_header = reply_feed_message.in_reply_to_header or ""
         await self._update_thread_with_reply_via_renderers(
             session, thread, patch_card, in_reply_to_header
         )
@@ -838,10 +870,11 @@ class FeedMessageService:
         session: AsyncSession,
         thread: PatchThread,
         patch_card: PatchCard,
-        in_reply_to_header: str,
+        reply_feed_message: FeedMessageData,
     ) -> None:
         """当 Reply 到达时，使用 ``thread_sender`` 更新 Thread。"""
         try:
+            in_reply_to_header = reply_feed_message.in_reply_to_header or ""
             target_patch, target_patch_index = await self._find_target_patch_for_reply(
                 patch_card, in_reply_to_header
             )
@@ -868,10 +901,16 @@ class FeedMessageService:
             if not overview_data:
                 return
 
+            # AI 摘要（可选，失败时静默 fallback）
+            reply_summary = await self._generate_and_persist_reply_summary(
+                session, reply_feed_message
+            )
+
             success = await self.thread_sender.update_thread_overview(
                 thread.thread_id,
                 message_id,
                 overview_data,
+                reply_summary=reply_summary,
             )
 
             if success:
@@ -891,6 +930,32 @@ class FeedMessageService:
                 e,
                 exc_info=True,
             )
+
+    async def _generate_and_persist_reply_summary(
+        self, session: AsyncSession, reply_message: FeedMessageData
+    ) -> str:
+        """为 reply 生成 AI 摘要并持久化到数据库
+
+        Returns:
+            摘要文本，失败时返回空字符串
+        """
+        if not self.summarizer or not reply_message.content:
+            return ""
+
+        summary = await self.summarizer.summarize(
+            reply_message.content, reply_message.subject or "", is_reply=True
+        )
+        if not summary:
+            return ""
+
+        # 持久化到数据库
+        if reply_message.message_id_header:
+            feed_message_repo = FeedMessageRepository(session)
+            await feed_message_repo.update_summary(
+                reply_message.message_id_header, summary
+            )
+
+        return summary
 
     async def _update_thread_with_reply_via_renderers(
         self,

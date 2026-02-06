@@ -55,6 +55,7 @@ class PluginConfig(BaseLKMLConfig):
             max_news_count=base_config.max_news_count,
             monitoring_interval=base_config.monitoring_interval,
             last_update_dt_override_iso=base_config.last_update_dt_override_iso,
+            gemini_api_key=base_config.gemini_api_key,
             discord_webhook_url=discord_webhook_url,
             discord_bot_token=discord_bot_token,
             platform_channel_id=platform_channel_id,

@@ -36,6 +36,7 @@ class FeedMessageData:
     patch_total: Optional[int] = None
     is_cover_letter: bool = False
     series_message_id: Optional[str] = None
+    summary: Optional[str] = None  # AI 生成的一句话摘要
     id: Optional[int] = None  # 数据库 ID（Repository 层内部使用，不暴露给上层）
 
 
@@ -80,6 +81,7 @@ class FeedMessageRepository:
             patch_total=model.patch_total,
             is_cover_letter=model.is_cover_letter,
             series_message_id=model.series_message_id,
+            summary=model.summary,
         )
 
     async def find_by_message_id_header(
@@ -170,6 +172,7 @@ class FeedMessageRepository:
         existing_model.patch_total = data.patch_total
         existing_model.is_cover_letter = data.is_cover_letter
         existing_model.series_message_id = data.series_message_id
+        existing_model.summary = data.summary
         await self.session.flush()
         return self._model_to_data(existing_model)
 
@@ -210,6 +213,30 @@ class FeedMessageRepository:
                     return await self._update_existing_feed_message(data)
             # 如果是其他 IntegrityError，重新抛出
             raise
+
+    async def update_summary(
+        self, message_id_header: str, summary: str
+    ) -> Optional[FeedMessageData]:
+        """更新 Feed 消息的 AI 摘要
+
+        Args:
+            message_id_header: 消息 Message-ID Header
+            summary: AI 生成的摘要
+
+        Returns:
+            更新后的 Feed 消息数据，如果不存在则返回 None
+        """
+        result = await self.session.execute(
+            select(FeedMessageModel).where(
+                FeedMessageModel.message_id_header == message_id_header
+            )
+        )
+        model = result.scalar_one_or_none()
+        if model:
+            model.summary = summary
+            await self.session.flush()
+            return self._model_to_data(model)
+        return None
 
     async def find_by_series_message_id(
         self, series_message_id: str
