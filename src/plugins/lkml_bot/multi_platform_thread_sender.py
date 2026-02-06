@@ -101,6 +101,11 @@ class MultiPlatformThreadSender:  # pylint: disable=too-few-public-methods
         message_id: str,
         overview_data: ThreadOverviewData,
         reply_summary: str = "",
+        reply_author: str = "",
+        reply_author_email: str = "",
+        reply_date: str = "",
+        reply_url: str = "",
+        reply_content: str = "",
     ) -> bool:
         """更新 Thread Overview
 
@@ -109,6 +114,11 @@ class MultiPlatformThreadSender:  # pylint: disable=too-few-public-methods
             message_id: 要更新的消息 ID
             overview_data: Thread Overview 数据
             reply_summary: Reply 的 AI 摘要（可选）
+            reply_author: 回复者名称
+            reply_author_email: 回复者邮箱
+            reply_date: 回复日期字符串
+            reply_url: 回复在 lore.kernel.org 上的链接
+            reply_content: 回复的原始内容（用于 fallback 摘要）
 
         Returns:
             成功返回 True，失败返回 False
@@ -135,7 +145,13 @@ class MultiPlatformThreadSender:  # pylint: disable=too-few-public-methods
         # 2) Feishu：发送 Thread 更新通知卡片
         try:
             feishu_rendered = self.feishu_renderer.render_update_notification(
-                overview_data, reply_summary=reply_summary
+                overview_data,
+                reply_summary=reply_summary,
+                reply_author=reply_author,
+                reply_author_email=reply_author_email,
+                reply_date=reply_date,
+                reply_url=reply_url,
+                reply_content=reply_content,
             )
             await self.feishu_client.update_thread_overview("", "", feishu_rendered)
         except Exception as e:  # pylint: disable=broad-except
@@ -149,7 +165,11 @@ class MultiPlatformThreadSender:  # pylint: disable=too-few-public-methods
         thread_id: str,
         platform_message_id: Optional[str] = None,
         reply_author: str = "",
+        reply_author_email: str = "",
+        reply_date: str = "",
         reply_summary: str = "",
+        reply_url: str = "",
+        reply_content: str = "",
     ) -> bool:
         """发送 Thread 更新通知
 
@@ -158,7 +178,11 @@ class MultiPlatformThreadSender:  # pylint: disable=too-few-public-methods
             thread_id: Thread ID
             platform_message_id: Patch Card 消息 ID（可选）
             reply_author: 回复者名称
+            reply_author_email: 回复者邮箱
+            reply_date: 回复日期字符串
             reply_summary: 回复的 AI 摘要
+            reply_url: 回复在 lore.kernel.org 上的链接
+            reply_content: 回复的原始内容（用于 fallback 摘要）
 
         Returns:
             成功返回 True，失败返回 False
@@ -169,5 +193,9 @@ class MultiPlatformThreadSender:  # pylint: disable=too-few-public-methods
             thread_id,
             platform_message_id,
             reply_author=reply_author,
+            reply_author_email=reply_author_email,
+            reply_date=reply_date,
             reply_summary=reply_summary,
+            reply_url=reply_url,
+            reply_content=reply_content,
         )

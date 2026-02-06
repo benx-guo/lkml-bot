@@ -806,7 +806,11 @@ class FeedMessageService:
         thread: PatchThread,
         patch_card: PatchCard,
         reply_author: str = "",
+        reply_author_email: str = "",
+        reply_date: str = "",
         reply_summary: str = "",
+        reply_url: str = "",
+        reply_content: str = "",
     ):
         """发送 Thread 更新通知到频道
 
@@ -814,7 +818,11 @@ class FeedMessageService:
             thread: Thread 对象
             patch_card: PATCH 卡片对象
             reply_author: 回复者名称
+            reply_author_email: 回复者邮箱
+            reply_date: 回复日期字符串
             reply_summary: 回复的 AI 摘要
+            reply_url: 回复在 lore.kernel.org 上的链接
+            reply_content: 回复的原始内容（用于 fallback 摘要）
         """
         try:
             # 使用新的 thread_sender（如果可用）
@@ -832,7 +840,11 @@ class FeedMessageService:
                     thread.thread_id,
                     patch_card.platform_message_id,
                     reply_author=reply_author,
+                    reply_author_email=reply_author_email,
+                    reply_date=reply_date,
                     reply_summary=reply_summary,
+                    reply_url=reply_url,
+                    reply_content=reply_content,
                 )
 
                 if success:
@@ -893,11 +905,22 @@ class FeedMessageService:
                 session, reply_feed_message
             )
 
+            reply_date_str = ""
+            if reply_feed_message.received_at:
+                reply_date_str = reply_feed_message.received_at.strftime(
+                    "%Y-%m-%d %H:%M UTC"
+                )
+
             success = await self.thread_sender.update_thread_overview(
                 thread.thread_id,
                 message_id,
                 overview_data,
                 reply_summary=reply_summary,
+                reply_author=reply_feed_message.author or "",
+                reply_author_email=reply_feed_message.author_email or "",
+                reply_date=reply_date_str,
+                reply_url=reply_feed_message.url or "",
+                reply_content=reply_feed_message.content or "",
             )
             if success:
                 logger.info(
@@ -908,7 +931,11 @@ class FeedMessageService:
                     thread,
                     patch_card,
                     reply_author=reply_feed_message.author or "",
+                    reply_author_email=reply_feed_message.author_email or "",
+                    reply_date=reply_date_str,
                     reply_summary=reply_summary,
+                    reply_url=reply_feed_message.url or "",
+                    reply_content=reply_feed_message.content or "",
                 )
             else:
                 logger.warning(

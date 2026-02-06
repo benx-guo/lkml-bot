@@ -98,7 +98,11 @@ class ThreadClient(ABC):
         thread_id: str,
         platform_message_id: Optional[str] = None,
         reply_author: str = "",
+        reply_author_email: str = "",
+        reply_date: str = "",
         reply_summary: str = "",
+        reply_url: str = "",
+        reply_content: str = "",
     ) -> bool:
         """发送 Thread 更新通知
 
@@ -107,7 +111,11 @@ class ThreadClient(ABC):
             thread_id: Thread ID
             platform_message_id: Patch Card 的消息 ID（可选）
             reply_author: 回复者名称
+            reply_author_email: 回复者邮箱
+            reply_date: 回复日期字符串
             reply_summary: 回复的 AI 摘要
+            reply_url: 回复在 lore.kernel.org 上的链接
+            reply_content: 回复的原始内容（用于 fallback 摘要）
 
         Returns:
             成功返回 True，失败返回 False

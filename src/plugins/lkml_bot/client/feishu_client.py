@@ -168,7 +168,11 @@ class FeishuClient(
         thread_id: str,
         platform_message_id: Optional[str] = None,
         reply_author: str = "",
+        reply_author_email: str = "",
+        reply_date: str = "",
         reply_summary: str = "",
+        reply_url: str = "",
+        reply_content: str = "",
     ) -> bool:
         """发送 Thread 更新通知（Feishu 不支持，直接返回 True）"""
         # Feishu 不支持 Thread 更新通知，直接返回 True

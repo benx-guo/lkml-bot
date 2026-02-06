@@ -7,6 +7,8 @@
 Discord 的唯一客户端实例使用。
 """
 
+# pylint: disable=too-many-lines
+
 import asyncio
 from typing import Dict, List, Optional, Tuple
 
@@ -626,15 +628,19 @@ async def check_thread_exists(config, thread_id: str) -> bool:
         return False
 
 
-async def send_thread_update_notification(  # pylint: disable=too-many-arguments
+async def send_thread_update_notification(  # pylint: disable=too-many-arguments,too-many-locals
     config,
     channel_id: str,
     thread_id: str,
     platform_message_id: Optional[str] = None,  # pylint: disable=unused-argument
     reply_author: str = "",
+    reply_author_email: str = "",
+    reply_date: str = "",
     reply_summary: str = "",
+    reply_url: str = "",
+    reply_content: str = "",
 ) -> bool:
-    """发送 Thread 更新通知到频道（包含回复者和摘要信息）"""
+    """发送 Thread 更新通知到频道（embed 格式，包含回复者和摘要信息）"""
     try:
         if not config.discord_bot_token:
             logger.error("Discord bot token not configured")
@@ -645,20 +651,39 @@ async def send_thread_update_notification(  # pylint: disable=too-many-arguments
             "Content-Type": "application/json",
         }
 
-        # 使用 Thread 提及格式 <#{thread_id}>
-        thread_mention = f"Thread: <#{thread_id}>"
+        from ..renders.helpers import build_author_display, build_content_excerpt
 
-        # 构建通知消息：包含回复者和摘要
-        lines = [f"💬 **New Reply** in {thread_mention}"]
+        # content: thread 提及（embed 内不支持 channel mention）
+        content = f"Thread: <#{thread_id}>"
+
+        # 构建 embed description
+        desc_lines = []
+
+        # From / Date 行
         if reply_author:
-            # 取作者名称部分（去掉邮箱后缀）
-            author_name = reply_author.split(" (", 1)[0].split(" <", 1)[0]
-            lines.append(f"**From:** {author_name}")
-        if reply_summary:
-            lines.append(f"> {reply_summary}")
-        content = "\n".join(lines)
+            author_display = build_author_display(reply_author, reply_author_email)
+            desc_lines.append(f"**From:** {author_display}")
+        if reply_date:
+            desc_lines.append(f"**Date:** {reply_date}")
 
-        message_data = {"content": content}
+        # 摘要优先用 AI summary，fallback 到 content excerpt
+        summary_text = reply_summary
+        if not summary_text and reply_content:
+            summary_text = build_content_excerpt(reply_content, quote_prefix="")
+        if summary_text:
+            desc_lines.append(f"\n> {summary_text}")
+
+        # reply URL 链接
+        if reply_url:
+            desc_lines.append(f"\n🔗 [View Reply]({reply_url})")
+
+        embed = {
+            "title": "💬 New Reply",
+            "description": "\n".join(desc_lines),
+            "color": 0x5865F2,
+        }
+
+        message_data = {"content": content, "embeds": [embed]}
 
         async with httpx.AsyncClient() as client:
             response = await client.post(
@@ -974,7 +999,11 @@ class DiscordClient(
         thread_id: str,
         platform_message_id: Optional[str] = None,
         reply_author: str = "",
+        reply_author_email: str = "",
+        reply_date: str = "",
         reply_summary: str = "",
+        reply_url: str = "",
+        reply_content: str = "",
     ) -> bool:
         """发送 Thread 更新通知到频道"""
         return await send_thread_update_notification(
@@ -983,5 +1012,9 @@ class DiscordClient(
             thread_id,
             platform_message_id,
             reply_author=reply_author,
+            reply_author_email=reply_author_email,
+            reply_date=reply_date,
             reply_summary=reply_summary,
+            reply_url=reply_url,
+            reply_content=reply_content,
         )
