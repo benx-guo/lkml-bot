@@ -13,7 +13,6 @@ from urllib.parse import urlparse
 import feedparser
 from feedparser.util import FeedParserDict
 import logging
-from sqlalchemy.exc import SQLAlchemyError
 
 logger = logging.getLogger(__name__)
 
@@ -21,8 +20,6 @@ logger = logging.getLogger(__name__)
 from ..config import get_config
 from ..db.models import Subsystem
 from ..db.repo import SUBSYSTEM_REPO
-from ..db.repo import FeedMessageRepository
-from ..service import FeedMessage
 
 if TYPE_CHECKING:
     from ..db.repo import FeedMessageData
@@ -313,46 +310,25 @@ class FeedProcessor:
         in_reply_to_header = self._extract_in_reply_to_header(entry)
         return (email, received_at, message_id, message_id_header, in_reply_to_header)
 
-    def _convert_repo_to_service_feed_message(
-        self, repo_data: "FeedMessageData"
-    ) -> FeedMessage:
-        """将 Repository 层的 FeedMessageData 转换为 Service 层的 FeedMessage"""
-        from ..service.helpers import extract_common_feed_message_fields
+    def _classify_feed_entry(
+        self, entry: FeedParserDict, subsystem: Subsystem
+    ) -> Tuple["FeedMessageData", object]:
+        """Classify a feed entry without any DB writes.
 
-        common_fields = extract_common_feed_message_fields(repo_data)
-        return FeedMessage(**common_fields)
-
-    async def _save_service_feed_message_to_repo(
-        self, feed_message_repo, service_feed_message_data
-    ):
-        """将 Service 层的 FeedMessage 转换为 Repo 层数据并保存"""
+        Returns:
+            (FeedMessageData, MessageClassification) tuple
+        """
         from ..db.repo import FeedMessageData as RepoFeedMessageData
 
-        from ..service.helpers import extract_common_feed_message_fields
-
-        common_fields = extract_common_feed_message_fields(service_feed_message_data)
-        repo_feed_message_data = RepoFeedMessageData(**common_fields)
-
-        return await feed_message_repo.create_or_update(data=repo_feed_message_data)
-
-    def _build_service_feed_message(  # pylint: disable=too-many-arguments
-        self,
-        entry: FeedParserDict,
-        subsystem: Subsystem,
-        email: str,
-        received_at: datetime,
-        message_id: str,
-        message_id_header: str,
-        in_reply_to_header: str,
-        classification,
-    ) -> FeedMessage:
-        """构建 Service 层的 FeedMessage 对象"""
+        base_data = self._extract_feed_message_data(entry, subsystem)
+        email, received_at, message_id, msg_id_header, in_reply_to = base_data
+        classification = classify_message(entry.title, in_reply_to, msg_id_header)
         patch_info = classification.patch_info
-        return FeedMessage(
+        data = RepoFeedMessageData(
             subsystem_name=subsystem.name,
+            message_id_header=msg_id_header or message_id,
             message_id=message_id,
-            message_id_header=message_id_header or message_id,
-            in_reply_to_header=in_reply_to_header,
+            in_reply_to_header=in_reply_to,
             subject=entry.title,
             author=entry.author,
             author_email=email or "unknown@example.com",
@@ -368,96 +344,7 @@ class FeedProcessor:
             is_cover_letter=patch_info.is_cover_letter if patch_info else False,
             series_message_id=classification.series_message_id,
         )
-
-    async def save_feed_message(
-        self, session, entry: FeedParserDict, subsystem: Subsystem
-    ):
-        """保存 Feed 消息到数据库
-
-        Args:
-            session: 数据库会话
-            entry: Feed 解析条目
-            subsystem: 子系统对象
-
-        Returns:
-            保存的 Feed 消息对象
-        """
-        # 提取基本数据（避免创建过多局部变量，使用聚合对象）
-        base_data = self._extract_feed_message_data(entry, subsystem)
-
-        # 创建 Repository 实例
-        feed_message_repo = FeedMessageRepository(session)
-
-        # 检查是否已存在
-        msg_id_header = base_data[3]
-        if msg_id_header:
-            existing_message_data = await feed_message_repo.find_by_message_id_header(
-                msg_id_header
-            )
-            if existing_message_data:
-                logger.debug(f"Feed message already exists: {msg_id_header}")
-                # 即使消息已存在，也需要分类并附加 _classification，以便后续处理 REPLY
-                classification = classify_message(
-                    subject=entry.title,
-                    in_reply_to_header=base_data[4],
-                    message_id_header=msg_id_header,
-                )
-                converted_message = self._convert_repo_to_service_feed_message(
-                    existing_message_data
-                )
-                # 附加分类信息以便后续处理
-                # pylint: disable=protected-access
-                converted_message._classification = classification  # type: ignore
-                return converted_message
-
-        # 使用标准化的消息分类器判断消息类型
-        classification = classify_message(
-            subject=entry.title,
-            in_reply_to_header=base_data[4],
-            message_id_header=msg_id_header,
-        )
-
-        # 调试日志：记录 Series Patch 的分类信息
-        if classification.is_series_patch and classification.patch_info:
-            logger.debug(
-                f"Series PATCH classified: subject={entry.title[:80]}, "
-                f"patch_index={classification.patch_info.index}/{classification.patch_info.total}, "
-                f"is_cover_letter={classification.patch_info.is_cover_letter}, "
-                f"series_message_id={classification.series_message_id[:50] if classification.series_message_id else None}"  # pylint: disable=line-too-long
-            )
-
-        # 构建 Service 层的 FeedMessage 对象
-        service_feed_message_data = self._build_service_feed_message(
-            entry,
-            subsystem,
-            base_data[0],
-            base_data[1],
-            base_data[2],
-            msg_id_header,
-            base_data[4],
-            classification,
-        )
-
-        # 转换为 repo 层数据并保存
-        feed_message_data = await self._save_service_feed_message_to_repo(
-            feed_message_repo, service_feed_message_data
-        )
-
-        # 回复消息补齐系列 ID
-        try:
-            if feed_message_data.is_reply:
-                await self._backfill_series_message_id_chain(
-                    feed_message_repo, feed_message_data
-                )
-        except (RuntimeError, ValueError, AttributeError, SQLAlchemyError) as e:
-            logger.debug(f"Backfill series_message_id failed: {e}")
-
-        # 将分类结果附加到 feed_message_data 对象（用于后续处理）
-        # pylint: disable=protected-access
-        # _classification is used for internal processing, not part of public API
-        feed_message_data._classification = classification  # type: ignore
-
-        return feed_message_data
+        return data, classification
 
     def _create_feed_entry(self, feed_message_data) -> FeedEntry:
         """创建 FeedEntry 对象
@@ -503,95 +390,37 @@ class FeedProcessor:
         """处理条目并返回统计信息
 
         分两个阶段：
-        1. 先将所有 feed_message 入库
-        2. 再批量处理（创建 Patch Card、处理 Reply）
-
-        这样可以避免 Cover Letter 先到达时，子 PATCH 还未入库的时序问题。
+        1. 在内存中分类所有 feed entry（无 DB 写入）
+        2. 由 service 层决定哪些消息需要持久化
         """
         new_count = 0
         reply_count = 0
         processed_entries: List[FeedEntry] = []
 
-        # 阶段 1: 保存所有 feed_message 到数据库
-        saved_messages = []
+        # Phase 1: Classify all entries in-memory (NO DB writes)
+        classified = []
         for entry in entries:
-            feed_message = await self.save_feed_message(session, entry, subsystem)
-            saved_messages.append((feed_message, entry))
+            data, classification = self._classify_feed_entry(entry, subsystem)
+            classified.append((data, classification))
 
-            # 统计消息类型
-            if feed_message.is_reply:
+        # Phase 2: Service layer decides what to persist
+        for data, classification in classified:
+            if classification.is_reply:
                 reply_count += 1
             else:
                 new_count += 1
 
-        # 阶段 2: 批量处理所有 feed_message
-        for feed_message, entry in saved_messages:
-            # 处理 PATCH 卡片生成和 REPLY 逻辑
-            # 使用附加的分类信息（不存储在模型中）
-            if hasattr(feed_message, "_classification") and self.feed_message_service:
-                # pylint: disable=protected-access
-                # _classification is used for internal processing, not part of public API
-                classification = feed_message._classification  # type: ignore
+            if self.feed_message_service:
                 try:
                     await self.feed_message_service.process_email_message(
-                        session, feed_message, classification
+                        session, data, classification
                     )
                 except (RuntimeError, ValueError, AttributeError) as e:
-                    logger.error(
-                        f"Failed to process feed message: {e}",
-                        exc_info=True,
-                    )
+                    logger.error("Failed to process feed message: %s", e, exc_info=True)
 
-            processed_entries.append(self._create_feed_entry(feed_message))
+            processed_entries.append(self._create_feed_entry(data))
 
         return (new_count, reply_count, processed_entries)
-
-    async def _backfill_series_message_id_chain(
-        self,
-        repo: FeedMessageRepository,
-        current: "FeedMessageData",
-    ) -> Optional[str]:
-        series_id = None
-        chain: list["FeedMessageData"] = []
-        visited: set[str] = set()
-
-        node = current
-        depth = 0
-        while node and node.in_reply_to_header and depth < 50:
-            chain.append(node)
-            visited.add(node.message_id_header)
-            parent = await repo.find_by_message_id_header(node.in_reply_to_header)
-            if not parent:
-                break
-            if parent.series_message_id:
-                series_id = parent.series_message_id
-                chain.append(parent)
-                break
-            node = parent
-            depth += 1
-
-        if not series_id:
-            root = None
-            probe = node
-            depth = 0
-            while probe and probe.in_reply_to_header and depth < 50:
-                root = probe
-                probe = await repo.find_by_message_id_header(probe.in_reply_to_header)
-                depth += 1
-            root = probe or root or current
-            if root:
-                series_id = root.series_message_id or root.message_id_header
-
-        if series_id:
-            for msg in chain:
-                if not msg.series_message_id:
-                    msg.series_message_id = series_id
-                    await repo.create_or_update(data=msg)
-            if not current.series_message_id:
-                current.series_message_id = series_id
-                await repo.create_or_update(data=current)
-            return series_id
-        return None
 
     def _update_last_update_time(self, entries: List[FeedParserDict]) -> None:
         """更新最后更新时间"""

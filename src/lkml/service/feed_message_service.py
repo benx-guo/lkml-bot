@@ -89,6 +89,31 @@ class FeedMessageService:
 
     # ========== 私有方法 ==========
 
+    async def _save_series_sub_patch_if_tracked(
+        self,
+        session: AsyncSession,
+        feed_message: FeedMessageData,
+        series_message_id: str,
+    ) -> None:
+        """Save series sub-patch to DB if the series is already tracked."""
+        from ..db.database import get_patch_card_service
+
+        async with get_patch_card_service() as svc:
+            if await svc.find_series_patch_card(series_message_id):
+                repo = FeedMessageRepository(session)
+                await repo.create_or_update(data=feed_message)
+
+    def _is_series_sub_patch(self, feed_message, classification) -> bool:
+        """Check if this is a series sub-patch (not Cover Letter)."""
+        patch_info = classification.patch_info
+        if not (classification.series_message_id and patch_info):
+            return False
+        return not (
+            patch_info.is_cover_letter
+            or feed_message.is_cover_letter
+            or (patch_info.index is not None and patch_info.index == 0)
+        )
+
     async def _process_patch_message(
         self,
         session: AsyncSession,
@@ -125,7 +150,6 @@ class FeedMessageService:
 
         # 创建新的 PATCH 卡片并发送到 Discord
         try:
-            # 检查渲染器是否可用
             if not self.patch_card_sender:
                 logger.debug(
                     f"PatchCard renderer not configured, skipping PATCH card creation: "
@@ -133,46 +157,39 @@ class FeedMessageService:
                 )
                 return
 
-            # 从分类结果中获取 PATCH 信息
-            patch_info = classification.patch_info
-            # Series PATCH 处理：只发送 Cover Letter，子 PATCH 不单独创建卡片
-            if classification.series_message_id and patch_info:
-                if not (
-                    patch_info.is_cover_letter
-                    or feed_message.is_cover_letter
-                    or (patch_info.index is not None and patch_info.index == 0)
-                ):
-                    # 子 PATCH (1/n, 2/n, ...) 只保存在 feed_message 表中
-                    logger.debug(
-                        f"Skipping patch_card creation for series sub-PATCH: "
-                        f"{feed_message.message_id_header}, "
-                        f"subject: {feed_message.subject[:50]}, "
-                        f"patch_index: {patch_info.index}/{patch_info.total}. "
-                        f"Sub-patch is stored in feed_message table only."
-                    )
-                    return
-
-            # 准备 Service 层的 FeedMessage 对象
-            service_feed_message = self._convert_to_service_feed_message(
-                feed_message, patch_info, classification.series_message_id
-            )
-
-            # 应用过滤规则（在默认 filter 基础上）
-            should_create, matched_filters = await self._should_create_patch_card(
-                session, service_feed_message, patch_info
-            )
-            if not should_create:
+            # Series sub-patch: save to DB if tracked, but don't create card
+            if self._is_series_sub_patch(feed_message, classification):
+                await self._save_series_sub_patch_if_tracked(
+                    session,
+                    feed_message,
+                    classification.series_message_id,
+                )
                 logger.debug(
-                    f"Patch card creation filtered out by rules: {feed_message.message_id_header}, "
+                    f"Skipping patch_card creation for series sub-PATCH: "
+                    f"{feed_message.message_id_header}, "
                     f"subject: {feed_message.subject[:50]}"
                 )
                 return
 
-            # 将匹配的过滤规则名称传递给 service_feed_message（用于后续渲染）
+            patch_info = classification.patch_info
+            service_feed_message = self._convert_to_service_feed_message(
+                feed_message, patch_info, classification.series_message_id
+            )
+
+            # 应用过滤规则
+            should_create, matched_filters = await self._should_create_patch_card(
+                session, service_feed_message, patch_info
+            )
+            if not should_create:
+                return
+
+            # Filter passed → persist feed_message to DB
+            repo = FeedMessageRepository(session)
+            await repo.create_or_update(data=feed_message)
+
             if matched_filters:
                 service_feed_message.matched_filters = matched_filters
 
-            # 检查 PATCH 卡片是否已存在
             async with get_patch_card_service() as service:
                 patch_card = await service.get_patch_card_with_series_data(
                     feed_message.message_id_header
@@ -182,9 +199,8 @@ class FeedMessageService:
                 session, matched_filters
             )
 
-            # PATCH 卡片不存在，准备创建
             if not patch_card:
-                patch_card = await self._create_and_send_patch_card(  # pylint: disable=too-many-arguments
+                patch_card = await self._create_and_send_patch_card(
                     session,
                     feed_message,
                     service_feed_message,
@@ -273,7 +289,10 @@ class FeedMessageService:
 
         # 保存到数据库
         return await self._save_patch_card_to_database(
-            session, service_feed_message, platform_message_id, platform_channel_id,
+            session,
+            service_feed_message,
+            platform_message_id,
+            platform_channel_id,
             summary=temp_patch_card.summary,
         )
 
@@ -338,7 +357,11 @@ class FeedMessageService:
         )
 
     async def _save_patch_card_to_database(
-        self, session, service_feed_message, platform_message_id, platform_channel_id,
+        self,
+        session,
+        service_feed_message,
+        platform_message_id,
+        platform_channel_id,
         summary=None,
     ):
         """保存 PATCH 卡片到数据库"""
@@ -378,8 +401,10 @@ class FeedMessageService:
 
         # 已建立并激活 Thread：保持现状，仅更新 Thread
         if patch_card and thread and thread.is_active:
-            # 更新 Thread：如果是多消息模式，只更新对应的子 PATCH 消息
-            # 传入 session 以确保能查询到新保存的 REPLY（还在同一事务中）
+            # Parent tracked → persist reply to DB
+            repo = FeedMessageRepository(session)
+            await repo.create_or_update(data=feed_message)
+
             await self._update_thread_with_reply(
                 session, thread, patch_card, feed_message
             )
@@ -502,6 +527,10 @@ class FeedMessageService:
                 patch_context
             )
 
+            # Reply perspective matched → persist the reply itself
+            repo = FeedMessageRepository(session)
+            await repo.create_or_update(data=reply_message)
+
             if matched_filters:
                 service_feed_message.matched_filters = matched_filters
 
@@ -542,6 +571,31 @@ class FeedMessageService:
                 exc_info=True,
             )
 
+    async def _mbox_fallback_resolve(
+        self,
+        reply_message: FeedMessageData,
+    ) -> tuple[Optional[FeedMessageData], Optional[list[FeedMessageData]]]:
+        """Try to resolve target patch via mbox when parent is not in DB.
+
+        Returns:
+            (target_patch, mbox_messages) tuple
+        """
+        from ..feed.thread_backfill import (
+            fetch_thread_mbox,
+            find_root_patch_in_messages,
+            parse_mbox_messages,
+        )
+
+        mbox_data = await fetch_thread_mbox(
+            reply_message.subsystem_name,
+            reply_message.in_reply_to_header,
+        )
+        if not mbox_data:
+            return None, None
+
+        mbox_messages = parse_mbox_messages(mbox_data, reply_message.subsystem_name)
+        return find_root_patch_in_messages(mbox_messages), mbox_messages
+
     async def _build_reply_patch_context(
         self, session: AsyncSession, reply_message: FeedMessageData
     ) -> Optional[tuple[FeedMessageData, object, ServiceFeedMessage, list[str]]]:
@@ -549,6 +603,14 @@ class FeedMessageService:
         target_patch = await self._resolve_patch_feed_message_for_reply(
             session, reply_message
         )
+
+        # mbox fallback: when parent not in DB, fetch from lore
+        mbox_messages: Optional[list[FeedMessageData]] = None
+        if not target_patch:
+            target_patch, mbox_messages = await self._mbox_fallback_resolve(
+                reply_message,
+            )
+
         if not target_patch or not target_patch.subject:
             return None
 
@@ -565,11 +627,14 @@ class FeedMessageService:
         should_create, matched_filters = await self._should_create_patch_card(
             session, filter_message, patch_info
         )
-        if not should_create:
+        if not should_create or not matched_filters:
             return None
-        if not matched_filters:
-            # Reply 视角必须命中过滤规则才触发后续处理
-            return None
+
+        # Filter passed → persist mbox messages to DB
+        if mbox_messages:
+            repo = FeedMessageRepository(session)
+            for msg in mbox_messages:
+                await repo.create_or_update(data=msg)
 
         # Patch Card 创建数据仍使用 Patch 本身
         service_feed_message = self._convert_to_service_feed_message(
@@ -607,7 +672,9 @@ class FeedMessageService:
         return await config_repo.get_auto_watch_enabled()
 
     async def _send_reply_notice(
-        self, session: AsyncSession, reply_message: FeedMessageData,
+        self,
+        session: AsyncSession,
+        reply_message: FeedMessageData,
         root_patch: FeedMessageData,
     ) -> None:
         """发送 Reply 视角通知消息"""
@@ -778,7 +845,10 @@ class FeedMessageService:
         thread_name = patch_card.subject[:100]
         thread_id, sub_patch_messages = (
             await self.thread_sender.create_thread_and_send_overview(
-                thread_name, patch_card.platform_message_id, overview_data
+                thread_name,
+                patch_card.platform_message_id,
+                overview_data,
+                skip_feishu_create=True,
             )
         )
 
@@ -800,6 +870,41 @@ class FeedMessageService:
             )
 
         await patch_card_service.mark_as_has_thread(patch_card.message_id_header)
+
+        # Backfill existing replies from lore
+        try:
+            from lkml.feed.thread_backfill import backfill_thread_replies
+
+            new_count = await backfill_thread_replies(
+                session,
+                patch_card.subsystem_name,
+                patch_card.message_id_header,
+            )
+            if new_count > 0 and sub_patch_messages:
+                logger.info(
+                    "Backfilled %d messages for %s",
+                    new_count,
+                    patch_card.message_id_header,
+                )
+                # Re-prepare and update overview
+                updated_overview = await thread_service.prepare_thread_overview_data(
+                    patch_card.message_id_header,
+                    patch_card_service=patch_card_service,
+                )
+                if updated_overview:
+                    overview_msg_id = next(iter(sub_patch_messages.values()), None)
+                    if overview_msg_id:
+                        await self.thread_sender.update_thread_overview(
+                            thread_id,
+                            overview_msg_id,
+                            updated_overview,
+                        )
+        except (RuntimeError, ValueError, AttributeError, OSError, KeyError):
+            logger.warning(
+                "Thread backfill failed for %s",
+                patch_card.message_id_header,
+                exc_info=True,
+            )
 
     async def _send_thread_update_notification(
         self,

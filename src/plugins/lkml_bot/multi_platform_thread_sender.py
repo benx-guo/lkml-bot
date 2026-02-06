@@ -41,7 +41,11 @@ class MultiPlatformThreadSender:  # pylint: disable=too-few-public-methods
         self.feishu_renderer = feishu_renderer
 
     async def create_thread_and_send_overview(
-        self, thread_name: str, message_id: str, overview_data: ThreadOverviewData
+        self,
+        thread_name: str,
+        message_id: str,
+        overview_data: ThreadOverviewData,
+        skip_feishu_create: bool = False,
     ) -> Tuple[Optional[str], Dict[int, str]]:
         """创建 Thread 并发送 Overview
 
@@ -49,6 +53,7 @@ class MultiPlatformThreadSender:  # pylint: disable=too-few-public-methods
             thread_name: Thread 名称
             message_id: Patch Card 消息 ID（用于创建 Thread）
             overview_data: Thread Overview 数据
+            skip_feishu_create: 跳过 Feishu 创建通知（auto-watch 时 Patch Card 已包含信息）
 
         Returns:
             (thread_id, sub_patch_messages) 元组
@@ -84,14 +89,17 @@ class MultiPlatformThreadSender:  # pylint: disable=too-few-public-methods
                 exc_info=True,
             )
 
-        # 2) Feishu：发送 Thread 创建通知卡片
-        try:
-            feishu_rendered = self.feishu_renderer.render_create_notification(
-                overview_data
-            )
-            await self.feishu_client.send_thread_overview("", feishu_rendered)
-        except Exception as e:  # pylint: disable=broad-except
-            logger.warning("Error sending Feishu thread creation notification: %s", e)
+        # 2) Feishu：发送 Thread 创建通知卡片（auto-watch 时跳过，Patch Card 已包含信息）
+        if not skip_feishu_create:
+            try:
+                feishu_rendered = self.feishu_renderer.render_create_notification(
+                    overview_data
+                )
+                await self.feishu_client.send_thread_overview("", feishu_rendered)
+            except Exception as e:  # pylint: disable=broad-except
+                logger.warning(
+                    "Error sending Feishu thread creation notification: %s", e
+                )
 
         return thread_id, sub_patch_messages
 
