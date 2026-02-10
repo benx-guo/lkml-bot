@@ -476,24 +476,51 @@ class FeedMessageService:
             feed_message.in_reply_to_header
         )
 
-        # 2. 如果没找到，可能是回复子 PATCH 的情况
+        # 2. 如果没找到，可能是回复子 PATCH 或 reply-to-reply 的情况
+        #    沿 in_reply_to 链向上回溯，直到找到 patch_card 或有 series_message_id 的消息
         if not patch_card:
             feed_message_repo = FeedMessageRepository(session)
-            sub_patch_feed_message = await feed_message_repo.find_by_message_id_header(
+            current_msg = await feed_message_repo.find_by_message_id_header(
                 feed_message.in_reply_to_header
             )
 
-            # 如果找到了子 PATCH 的 feed_message，通过它的 series_message_id 查找 Cover Letter
-            if sub_patch_feed_message and sub_patch_feed_message.series_message_id:
-                patch_card = await patch_card_service.find_series_patch_card(
-                    sub_patch_feed_message.series_message_id
+            for _ in range(10):  # 最大回溯深度
+                if not current_msg:
+                    break
+
+                # 找到有 series_message_id 的消息 → 通过它查找 Cover Letter
+                if current_msg.series_message_id:
+                    patch_card = await patch_card_service.find_series_patch_card(
+                        current_msg.series_message_id
+                    )
+                    if patch_card:
+                        logger.debug(
+                            f"Found Cover Letter via reply chain series_message_id: "
+                            f"in_reply_to={feed_message.in_reply_to_header}, "
+                            f"series_message_id={current_msg.series_message_id}"
+                        )
+                    break
+
+                # 没有 series_message_id，尝试沿 in_reply_to 继续向上
+                if not current_msg.in_reply_to_header:
+                    break
+
+                # 尝试直接匹配 patch_card
+                patch_card = await patch_card_service.find_by_message_id_header(
+                    current_msg.in_reply_to_header
                 )
                 if patch_card:
                     logger.debug(
-                        f"Found Cover Letter via sub-patch series_message_id: "
+                        f"Found patch card via reply chain traversal: "
                         f"in_reply_to={feed_message.in_reply_to_header}, "
-                        f"series_message_id={sub_patch_feed_message.series_message_id}"
+                        f"patch_card={patch_card.message_id_header}"
                     )
+                    break
+
+                # 继续向上追溯
+                current_msg = await feed_message_repo.find_by_message_id_header(
+                    current_msg.in_reply_to_header
+                )
 
         if not patch_card:
             logger.debug(
@@ -986,10 +1013,10 @@ class FeedMessageService:
             )
             if not target_patch or target_patch_index is None:
                 logger.debug(
-                    "Could not find target patch for reply: %s",
+                    "Could not find target patch for reply (reply-to-reply): %s, "
+                    "will still update overview",
                     in_reply_to_header,
                 )
-                return
 
             message_id = self._get_thread_overview_message_id(thread)
             if not message_id:
