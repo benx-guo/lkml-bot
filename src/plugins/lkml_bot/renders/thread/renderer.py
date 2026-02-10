@@ -118,7 +118,9 @@ class ThreadOverviewRenderer:
 
         # 格式化当前节点：` 时间 [subject](url) 作者
         subject = msg.subject.split("] ", 1)[0] + "]"
-        msg_time = msg.received_at.strftime("%Y-%m-%d %H:%M") if msg.received_at else ""
+        msg_time = (
+            msg.received_at.strftime("%Y-%m-%d %H:%M UTC") if msg.received_at else ""
+        )
         author = msg.author.split(" (", 1)[0] if msg.author else "Unknown"
 
         lines.append(f"{indent}\\` {msg_time} [{subject}]({msg.url}) {author}")
