@@ -163,17 +163,13 @@ class FeishuClient(
         )
 
     async def send_thread_update_notification(
-        self, channel_id: str, thread_id: str, platform_message_id: Optional[str] = None
+        self,
+        channel_id: str,
+        thread_id: str,
+        platform_message_id: Optional[str] = None,
+        reply_author: str = "",
+        reply_summary: str = "",
     ) -> bool:
-        """发送 Thread 更新通知（Feishu 不支持，直接返回 True）
-
-        Args:
-            channel_id: 频道 ID（未使用）
-            thread_id: Thread ID（未使用）
-            platform_message_id: 消息 ID（未使用）
-
-        Returns:
-            总是返回 True（Feishu 不支持此功能）
-        """
+        """发送 Thread 更新通知（Feishu 不支持，直接返回 True）"""
         # Feishu 不支持 Thread 更新通知，直接返回 True
         return True

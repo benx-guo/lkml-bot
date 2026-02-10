@@ -27,14 +27,7 @@ DISCORD_CONTENT_MAX_LENGTH = 2000
 
 
 def truncate_description(description: str) -> str:
-    """截断描述以符合 Discord embed 限制
-
-    Args:
-        description: 原始描述
-
-    Returns:
-        截断后的描述
-    """
+    """截断描述以符合 Discord embed 限制"""
     if len(description) > DISCORD_EMBED_DESCRIPTION_MAX_LENGTH:
         logger.warning(
             f"Description too long ({len(description)} chars), truncating to {DISCORD_EMBED_DESCRIPTION_MAX_LENGTH}"
@@ -633,23 +626,15 @@ async def check_thread_exists(config, thread_id: str) -> bool:
         return False
 
 
-async def send_thread_update_notification(
+async def send_thread_update_notification(  # pylint: disable=too-many-arguments
     config,
     channel_id: str,
     thread_id: str,
     platform_message_id: Optional[str] = None,  # pylint: disable=unused-argument
+    reply_author: str = "",
+    reply_summary: str = "",
 ) -> bool:
-    """发送 Thread 更新通知到频道
-
-    Args:
-        config: 配置对象
-        channel_id: 频道 ID
-        thread_id: Thread ID
-        platform_message_id: Patch Card 的消息 ID（用于构建 Thread 链接）
-
-    Returns:
-        成功返回 True，失败返回 False
-    """
+    """发送 Thread 更新通知到频道（包含回复者和摘要信息）"""
     try:
         if not config.discord_bot_token:
             logger.error("Discord bot token not configured")
@@ -663,8 +648,15 @@ async def send_thread_update_notification(
         # 使用 Thread 提及格式 <#{thread_id}>
         thread_mention = f"Thread: <#{thread_id}>"
 
-        # 构建通知消息
-        content = f"🔄 **Thread Overview 已更新**\n\n{thread_mention}\n\n"
+        # 构建通知消息：包含回复者和摘要
+        lines = [f"💬 **New Reply** in {thread_mention}"]
+        if reply_author:
+            # 取作者名称部分（去掉邮箱后缀）
+            author_name = reply_author.split(" (", 1)[0].split(" <", 1)[0]
+            lines.append(f"**From:** {author_name}")
+        if reply_summary:
+            lines.append(f"> {reply_summary}")
+        content = "\n".join(lines)
 
         message_data = {"content": content}
 
@@ -703,18 +695,7 @@ async def send_message_to_thread(
     embed: Optional[Dict] = None,
     max_retries: int = 3,
 ) -> Optional[str]:
-    """发送消息到 Thread（带 rate limit 处理）
-
-    Args:
-        config: 配置对象
-        thread_id: Thread ID
-        content: 消息内容
-        embed: 可选的 embed 字典
-        max_retries: 遇到 429 时的最大重试次数
-
-    Returns:
-        成功返回消息 ID，失败返回 None
-    """
+    """发送消息到 Thread（带 rate limit 处理）"""
     try:
         if not config.discord_bot_token:
             logger.error("Discord bot token not configured")
@@ -988,9 +969,19 @@ class DiscordClient(
         )
 
     async def send_thread_update_notification(
-        self, channel_id: str, thread_id: str, platform_message_id: Optional[str] = None
+        self,
+        channel_id: str,
+        thread_id: str,
+        platform_message_id: Optional[str] = None,
+        reply_author: str = "",
+        reply_summary: str = "",
     ) -> bool:
         """发送 Thread 更新通知到频道"""
         return await send_thread_update_notification(
-            self.config, channel_id, thread_id, platform_message_id
+            self.config,
+            channel_id,
+            thread_id,
+            platform_message_id,
+            reply_author=reply_author,
+            reply_summary=reply_summary,
         )

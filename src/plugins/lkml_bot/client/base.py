@@ -93,7 +93,12 @@ class ThreadClient(ABC):
 
     @abstractmethod
     async def send_thread_update_notification(
-        self, channel_id: str, thread_id: str, platform_message_id: Optional[str] = None
+        self,
+        channel_id: str,
+        thread_id: str,
+        platform_message_id: Optional[str] = None,
+        reply_author: str = "",
+        reply_summary: str = "",
     ) -> bool:
         """发送 Thread 更新通知
 
@@ -101,6 +106,8 @@ class ThreadClient(ABC):
             channel_id: 频道 ID
             thread_id: Thread ID
             platform_message_id: Patch Card 的消息 ID（可选）
+            reply_author: 回复者名称
+            reply_summary: 回复的 AI 摘要
 
         Returns:
             成功返回 True，失败返回 False

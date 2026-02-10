@@ -331,6 +331,10 @@ class FeedMessageService:
             is_cover_letter=service_feed_message.is_cover_letter,
             series_patches=series_patches,
             matched_filters=service_feed_message.matched_filters,
+            content=feed_message.content,
+            received_at=feed_message.received_at,
+            author_email=feed_message.author_email,
+            to_cc_list=getattr(feed_message, "to_cc_list", None),
         )
 
     async def _save_patch_card_to_database(
@@ -615,6 +619,7 @@ class FeedMessageService:
 
         payload = {
             "reply_author": reply_message.author_email or reply_message.author,
+            "reply_author_name": reply_message.author or "",
             "reply_subject": reply_message.subject or "",
             "reply_url": reply_message.url,
             "reply_subsystem": reply_message.subsystem_name or "",
@@ -623,6 +628,7 @@ class FeedMessageService:
                 if reply_message.received_at
                 else ""
             ),
+            "reply_content": reply_message.content or "",
             "root_subject": root_patch.subject or "",
             "root_url": root_patch.url,
         }
@@ -796,13 +802,19 @@ class FeedMessageService:
         await patch_card_service.mark_as_has_thread(patch_card.message_id_header)
 
     async def _send_thread_update_notification(
-        self, thread: PatchThread, patch_card: PatchCard
+        self,
+        thread: PatchThread,
+        patch_card: PatchCard,
+        reply_author: str = "",
+        reply_summary: str = "",
     ):
         """发送 Thread 更新通知到频道
 
         Args:
             thread: Thread 对象
             patch_card: PATCH 卡片对象
+            reply_author: 回复者名称
+            reply_summary: 回复的 AI 摘要
         """
         try:
             # 使用新的 thread_sender（如果可用）
@@ -819,6 +831,8 @@ class FeedMessageService:
                     channel_id,
                     thread.thread_id,
                     patch_card.platform_message_id,
+                    reply_author=reply_author,
+                    reply_summary=reply_summary,
                 )
 
                 if success:
@@ -843,50 +857,24 @@ class FeedMessageService:
         thread: PatchThread,
         patch_card: PatchCard,
         reply_feed_message: FeedMessageData,
-    ):
-        """当 Reply 到达时，更新 Thread
-
-        根据是否配置了 ``thread_sender``，选择对应的更新实现。
-
-        Args:
-            session: 数据库会话（用于查询，确保能查询到新保存的 REPLY）
-            thread: Thread 对象
-            patch_card: PATCH 卡片对象
-            reply_feed_message: Reply 消息对象
-        """
-        if self.thread_sender:
-            await self._update_thread_with_reply_via_thread_sender(
-                session, thread, patch_card, reply_feed_message
-            )
+    ) -> None:
+        """当 Reply 到达时，更新 Thread Overview"""
+        if not self.thread_sender:
             return
 
-        in_reply_to_header = reply_feed_message.in_reply_to_header or ""
-        await self._update_thread_with_reply_via_renderers(
-            session, thread, patch_card, in_reply_to_header
-        )
-
-    async def _update_thread_with_reply_via_thread_sender(
-        self,
-        session: AsyncSession,
-        thread: PatchThread,
-        patch_card: PatchCard,
-        reply_feed_message: FeedMessageData,
-    ) -> None:
-        """当 Reply 到达时，使用 ``thread_sender`` 更新 Thread。"""
         try:
             in_reply_to_header = reply_feed_message.in_reply_to_header or ""
             target_patch, target_patch_index = await self._find_target_patch_for_reply(
                 patch_card, in_reply_to_header
             )
-
             if not target_patch or target_patch_index is None:
                 logger.debug(
-                    "Could not find target patch for reply: %s", in_reply_to_header
+                    "Could not find target patch for reply: %s",
+                    in_reply_to_header,
                 )
                 return
 
             message_id = self._get_thread_overview_message_id(thread)
-
             if not message_id:
                 logger.warning(
                     "No overview message_id found for thread %s",
@@ -897,7 +885,6 @@ class FeedMessageService:
             overview_data = await self._prepare_thread_overview_data(
                 session, patch_card.message_id_header
             )
-
             if not overview_data:
                 return
 
@@ -912,13 +899,17 @@ class FeedMessageService:
                 overview_data,
                 reply_summary=reply_summary,
             )
-
             if success:
                 logger.info(
                     "Updated thread overview message in thread %s",
                     thread.thread_id,
                 )
-                await self._send_thread_update_notification(thread, patch_card)
+                await self._send_thread_update_notification(
+                    thread,
+                    patch_card,
+                    reply_author=reply_feed_message.author or "",
+                    reply_summary=reply_summary,
+                )
             else:
                 logger.warning(
                     "Failed to update thread overview message in thread %s",
@@ -956,78 +947,6 @@ class FeedMessageService:
             )
 
         return summary
-
-    async def _update_thread_with_reply_via_renderers(
-        self,
-        session: AsyncSession,
-        thread: PatchThread,
-        patch_card: PatchCard,
-        in_reply_to_header: str,
-    ) -> None:
-        """当 Reply 到达时，通过渲染器列表更新 Thread。"""
-        try:
-            target_patch, target_patch_index = await self._find_target_patch_for_reply(
-                patch_card, in_reply_to_header
-            )
-
-            if not target_patch or target_patch_index is None:
-                logger.debug(
-                    "Could not find target patch for reply: %s", in_reply_to_header
-                )
-                return
-
-            message_id = self._get_thread_overview_message_id(thread)
-
-            if not message_id:
-                logger.warning(
-                    "No overview message_id found for thread %s",
-                    thread.thread_id,
-                )
-                return
-
-            overview_data = await self._prepare_thread_overview_data(
-                session, patch_card.message_id_header
-            )
-
-            if not overview_data:
-                return
-
-            successes: list[bool] = []
-            for renderer in self.thread_overview_renderers:
-                try:
-                    result = await renderer.update_sub_patch_message(
-                        thread.thread_id,
-                        message_id,
-                        overview_data,
-                    )
-                    successes.append(bool(result))
-                except (RuntimeError, ValueError, AttributeError) as e:
-                    successes.append(False)
-                    logger.error(
-                        "Failed to update patch [%s] message in thread %s: %s",
-                        target_patch_index,
-                        thread.thread_id,
-                        e,
-                        exc_info=True,
-                    )
-
-            if any(successes):
-                logger.info(
-                    "Updated thread overview message in thread %s",
-                    thread.thread_id,
-                )
-                await self._send_thread_update_notification(thread, patch_card)
-            else:
-                logger.warning(
-                    "Failed to update thread overview message in thread %s",
-                    thread.thread_id,
-                )
-        except (RuntimeError, ValueError, AttributeError) as e:
-            logger.error(
-                "Failed to update thread with reply: %s",
-                e,
-                exc_info=True,
-            )
 
     async def _find_target_patch_for_reply(
         self, patch_card: PatchCard, in_reply_to_header: str

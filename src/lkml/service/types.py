@@ -49,6 +49,10 @@ class PatchCard:
     to_cc_list: Optional[List[str]] = (
         None  # To 和 CC 列表（从 root patch 抓取，合并去重）
     )
+    content: Optional[str] = None  # 正文内容（用于渲染摘要）
+    summary: Optional[str] = None  # AI 生成的一句话摘要
+    received_at: Optional[datetime] = None  # 真正的接收时间
+    author_email: Optional[str] = None  # 作者邮箱
 
     # 渲染相关字段（供 Plugins 层使用）
     series_patches: Optional[List[SeriesPatchInfo]] = (
