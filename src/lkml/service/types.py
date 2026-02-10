@@ -6,7 +6,8 @@
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict
+
 
 # 类型别名：在运行时导入实际模型，供 plugins 层使用
 # 这样 plugins 层就不需要直接依赖 lkml.db.models
@@ -93,47 +94,22 @@ class PatchThread:
     thread_id: str
     thread_name: str
     is_active: bool = True
-    sub_patch_messages: Optional[Dict[int, str]] = None  # {patch_index: message_id}
     overview_message_id: Optional[str] = None
+    sub_patch_messages: Optional[Dict[str, str]] = None
     created_at: Optional[datetime] = None
     archived_at: Optional[datetime] = None
 
 
 @dataclass
-class ReplyMapEntry:
-    """回复映射条目
+class ThreadNode:
+    """Thread 层级树节点
 
-    表示回复层级结构中的一个节点
+    表示邮件讨论树中的一个节点
     """
 
-    reply: Any  # FeedMessage 对象
-    children: List[str]  # 子回复的 message_id_header 列表
-
-
-@dataclass
-class ReplyHierarchy:
-    """回复层级结构
-
-    表示 PATCH 的所有回复的层级关系
-    """
-
-    reply_map: Dict[str, ReplyMapEntry]  # {message_id: ReplyMapEntry}
-    root_replies: List[str]  # 根回复的 message_id_header 列表
-
-
-@dataclass
-class SubPatchOverviewData:
-    """单个子 PATCH 的 Overview 数据（供 Plugins 层渲染使用）
-
-    包含渲染单个子 PATCH 所需的完整数据：
-    - PATCH 信息
-    - 该 PATCH 的所有回复（包括直接和间接回复）
-    - 回复层级结构（基于该 PATCH 的回复构建）
-    """
-
-    patch: SeriesPatchInfo  # 子 PATCH 信息
-    replies: List[FeedMessage]  # 该 PATCH 的所有回复列表
-    reply_hierarchy: ReplyHierarchy  # 该 PATCH 的回复层级结构
+    message: "FeedMessage"  # 消息内容
+    children: List["ThreadNode"]  # 子节点列表
+    node_type: str  # "cover_letter" | "sub_patch" | "reply"
 
 
 @dataclass
@@ -144,8 +120,4 @@ class ThreadOverviewData:
     """
 
     patch_card: PatchCard  # PatchCard 信息（包含 series_patches）
-    replies: List[FeedMessage]  # 所有回复列表
-    reply_hierarchy: ReplyHierarchy  # 回复层级结构
-    sub_patch_overviews: Optional[List[SubPatchOverviewData]] = (
-        None  # 每个子 PATCH 的独立 overview 数据（Series Patch 时使用）
-    )
+    root: Optional["ThreadNode"] = None  # 完整层级树

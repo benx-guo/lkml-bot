@@ -18,16 +18,14 @@ from .types import (
     PatchCard,
     FeedMessage,
     PatchThread,
+    ThreadNode,
     ThreadOverviewData,
 )
 from .query_service import QueryService, query_service
 from .service import LKMLService, lkml_service
 from .subsystem_service import SubsystemService, subsystem_service
 
-from .thread_service import (
-    ThreadService,
-    parse_reply_time,
-)
+from .thread_service import ThreadService
 from .feed_message_service import FeedMessageService
 
 
@@ -67,7 +65,6 @@ __all__ = [
     "PatchCard",
     "FeedMessage",
     "PatchThread",
+    "ThreadNode",
     "ThreadOverviewData",
-    # 回复处理辅助函数
-    "parse_reply_time",
 ]
