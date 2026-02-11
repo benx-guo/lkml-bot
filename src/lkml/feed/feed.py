@@ -52,32 +52,27 @@ class FeedProcessor:
         self.thread_manager = thread_manager
         self.feed_message_service = feed_message_service
 
-        # 初始化 last_update_dt
-        # 优先使用环境变量覆盖（用于调试/开发）
+        # Per-subsystem last_update_dt tracking (fixes shared-timestamp bug)
+        self._last_update_dts: dict[str, datetime] = {}
+
+        # 解析环境变量覆盖（用于调试/开发），作为所有子系统的初始值
+        self._override_dt: Optional[datetime] = None
         cfg = get_config()
         override_iso = getattr(cfg, "last_update_dt_override_iso", None)
         if override_iso is not None:
-            # 使用 ISO8601 字符串覆盖（支持结尾 Z）
             iso_str = str(override_iso).strip()
             try:
                 if iso_str.endswith("Z"):
                     iso_str = iso_str[:-1] + "+00:00"
-                self.last_update_dt = datetime.fromisoformat(iso_str)
-                # 确保为 aware；若解析为 naive，则设为 UTC
-                if self.last_update_dt.tzinfo is None:
-                    self.last_update_dt = self.last_update_dt.replace(
-                        tzinfo=timezone.utc
-                    )
-                logger.info(
-                    f"Using LKML_LAST_UPDATE_AT override: {self.last_update_dt}"
-                )
+                self._override_dt = datetime.fromisoformat(iso_str)
+                if self._override_dt.tzinfo is None:
+                    self._override_dt = self._override_dt.replace(tzinfo=timezone.utc)
+                logger.info(f"Using LKML_LAST_UPDATE_AT override: {self._override_dt}")
             except (ValueError, AttributeError, TypeError):
                 logger.warning(
-                    f"Invalid LKML_LAST_UPDATE_AT format: {override_iso}, using database query"
+                    f"Invalid LKML_LAST_UPDATE_AT format: {override_iso}, "
+                    "using database query"
                 )
-                self.last_update_dt = None  # 标记需要从数据库查询
-        else:
-            self.last_update_dt = None  # 标记需要从数据库查询
 
     def _handle_feed_status(self, feed_status: Optional[int], feed_url: str) -> bool:
         """处理 feed 状态码，返回是否应该继续处理"""
@@ -116,7 +111,7 @@ class FeedProcessor:
         return True
 
     def _filter_entries_by_date(
-        self, feed_entries: List[FeedParserDict]
+        self, feed_entries: List[FeedParserDict], last_update_dt: datetime
     ) -> List[FeedParserDict]:
         """根据日期筛选新条目"""
         entries: List[FeedParserDict] = []
@@ -128,13 +123,15 @@ class FeedProcessor:
                 entries.append(entry)
                 continue
 
-            if entry_dt > self.last_update_dt:
+            if entry_dt > last_update_dt:
                 entries.append(entry)
             # 不使用 break，继续检查所有条目
             # lore.kernel.org 的 feed 不保证严格按时间递减排序
         return entries
 
-    def get_feed_entries(self, feed_url: str) -> List[FeedParserDict]:
+    def get_feed_entries(
+        self, feed_url: str, last_update_dt: datetime
+    ) -> List[FeedParserDict]:
         """拉取并筛选新条目（带指数退避重试）"""
         start_ts = time.time()
         logger.info(f"Fetching feed from {feed_url}")
@@ -167,7 +164,7 @@ class FeedProcessor:
             if not self._handle_feed_bozo(feed, feed_url):
                 return []
 
-            entries = self._filter_entries_by_date(feed.entries)
+            entries = self._filter_entries_by_date(feed.entries, last_update_dt)
 
             if feed.bozo and entries:
                 logger.info(
@@ -422,26 +419,31 @@ class FeedProcessor:
 
         return (new_count, reply_count, processed_entries)
 
-    def _update_last_update_time(self, entries: List[FeedParserDict]) -> None:
-        """更新最后更新时间"""
+    def _update_last_update_time(
+        self, subsystem_name: str, entries: List[FeedParserDict]
+    ) -> None:
+        """更新指定子系统的最后更新时间"""
         if not entries:
             return
         latest_entry = entries[0]
         if hasattr(latest_entry, "updated_parsed") and latest_entry.updated_parsed:
-            self.last_update_dt = datetime(
+            self._last_update_dts[subsystem_name] = datetime(
                 *latest_entry.updated_parsed[:6], tzinfo=timezone.utc
             )
 
     async def _initialize_last_update_dt(self, subsystem_name: str) -> None:
-        """从数据库初始化 last_update_dt
-
-        如果 last_update_dt 为 None，从数据库中查询该子系统最新的 received_at
+        """从数据库初始化指定子系统的 last_update_dt
 
         Args:
             subsystem_name: 子系统名称
         """
-        if self.last_update_dt is not None:
-            return  # 已经初始化（使用环境变量覆盖）
+        if subsystem_name in self._last_update_dts:
+            return  # 该子系统已初始化
+
+        # 环境变量覆盖优先
+        if self._override_dt is not None:
+            self._last_update_dts[subsystem_name] = self._override_dt
+            return
 
         try:
             async with self.database.get_db_session() as session:
@@ -457,30 +459,28 @@ class FeedProcessor:
                 max_received_at = result.scalar()
 
                 if max_received_at:
-                    # 确保为 aware datetime
                     if max_received_at.tzinfo is None:
-                        self.last_update_dt = max_received_at.replace(
+                        self._last_update_dts[subsystem_name] = max_received_at.replace(
                             tzinfo=timezone.utc
                         )
                     else:
-                        self.last_update_dt = max_received_at
+                        self._last_update_dts[subsystem_name] = max_received_at
                     logger.info(
                         f"Initialized last_update_dt from database for {subsystem_name}: "
-                        f"{self.last_update_dt}"
+                        f"{self._last_update_dts[subsystem_name]}"
                     )
                 else:
-                    # 没有历史数据，使用当前时间
-                    self.last_update_dt = datetime.now(timezone.utc)
+                    self._last_update_dts[subsystem_name] = datetime.now(timezone.utc)
                     logger.info(
                         f"No historical data for {subsystem_name}, using current time: "
-                        f"{self.last_update_dt}"
+                        f"{self._last_update_dts[subsystem_name]}"
                     )
         except (RuntimeError, ValueError) as e:
             logger.warning(
-                f"Failed to initialize last_update_dt from database: {e}, "
-                f"using current time"
+                f"Failed to initialize last_update_dt from database for "
+                f"{subsystem_name}: {e}, using current time"
             )
-            self.last_update_dt = datetime.now(timezone.utc)
+            self._last_update_dts[subsystem_name] = datetime.now(timezone.utc)
 
     async def process_feed(
         self, subsystem_name: str, feed_url: str
@@ -496,12 +496,12 @@ class FeedProcessor:
         """
         logger.info(f"Processing feed for subsystem: {subsystem_name}")
 
-        # 初始化 last_update_dt（如果还没有初始化）
+        # 初始化该子系统的 last_update_dt（如果还没有初始化）
         await self._initialize_last_update_dt(subsystem_name)
 
         proc_start = time.time()
 
-        entries = self.get_feed_entries(feed_url)
+        entries = self.get_feed_entries(feed_url, self._last_update_dts[subsystem_name])
         if not entries:
             logger.info(f"No new entries found for {subsystem_name}")
             return FeedProcessResult(
@@ -515,7 +515,7 @@ class FeedProcessor:
             )
             await session.commit()
 
-        self._update_last_update_time(entries)
+        self._update_last_update_time(subsystem_name, entries)
 
         proc_ms = int((time.time() - proc_start) * 1000)
         logger.info(
