@@ -79,6 +79,8 @@ class FeedMessageModel(Base):  # pylint: disable=too-few-public-methods
     # 系列 PATCH 的根 message_id（用于关联系列中的 PATCH）
     series_message_id = Column(String(500), nullable=True, index=True)
 
+    summary = Column(Text, nullable=True)  # AI 生成的一句话摘要
+
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
@@ -146,6 +148,7 @@ class PatchCardModel(Base):  # pylint: disable=too-few-public-methods
     to_cc_list = Column(
         JSON, nullable=True
     )  # To 和 CC 列表（从 root patch 抓取，JSON 格式存储邮箱列表，合并去重）
+    summary = Column(Text, nullable=True)  # AI 生成的一句话摘要
 
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
     expires_at = Column(DateTime, nullable=False, index=True)  # 过期时间（24小时后）

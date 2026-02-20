@@ -41,7 +41,11 @@ class MultiPlatformThreadSender:  # pylint: disable=too-few-public-methods
         self.feishu_renderer = feishu_renderer
 
     async def create_thread_and_send_overview(
-        self, thread_name: str, message_id: str, overview_data: ThreadOverviewData
+        self,
+        thread_name: str,
+        message_id: str,
+        overview_data: ThreadOverviewData,
+        skip_feishu_create: bool = False,
     ) -> Tuple[Optional[str], Dict[int, str]]:
         """创建 Thread 并发送 Overview
 
@@ -49,6 +53,7 @@ class MultiPlatformThreadSender:  # pylint: disable=too-few-public-methods
             thread_name: Thread 名称
             message_id: Patch Card 消息 ID（用于创建 Thread）
             overview_data: Thread Overview 数据
+            skip_feishu_create: 跳过 Feishu 创建通知（auto-watch 时 Patch Card 已包含信息）
 
         Returns:
             (thread_id, sub_patch_messages) 元组
@@ -84,14 +89,17 @@ class MultiPlatformThreadSender:  # pylint: disable=too-few-public-methods
                 exc_info=True,
             )
 
-        # 2) Feishu：发送 Thread 创建通知卡片
-        try:
-            feishu_rendered = self.feishu_renderer.render_create_notification(
-                overview_data
-            )
-            await self.feishu_client.send_thread_overview("", feishu_rendered)
-        except Exception as e:  # pylint: disable=broad-except
-            logger.warning("Error sending Feishu thread creation notification: %s", e)
+        # 2) Feishu：发送 Thread 创建通知卡片（auto-watch 时跳过，Patch Card 已包含信息）
+        if not skip_feishu_create:
+            try:
+                feishu_rendered = self.feishu_renderer.render_create_notification(
+                    overview_data
+                )
+                await self.feishu_client.send_thread_overview("", feishu_rendered)
+            except Exception as e:  # pylint: disable=broad-except
+                logger.warning(
+                    "Error sending Feishu thread creation notification: %s", e
+                )
 
         return thread_id, sub_patch_messages
 
@@ -100,6 +108,12 @@ class MultiPlatformThreadSender:  # pylint: disable=too-few-public-methods
         thread_id: str,
         message_id: str,
         overview_data: ThreadOverviewData,
+        reply_summary: str = "",
+        reply_author: str = "",
+        reply_author_email: str = "",
+        reply_date: str = "",
+        reply_url: str = "",
+        reply_content: str = "",
     ) -> bool:
         """更新 Thread Overview
 
@@ -107,6 +121,12 @@ class MultiPlatformThreadSender:  # pylint: disable=too-few-public-methods
             thread_id: Discord Thread ID
             message_id: 要更新的消息 ID
             overview_data: Thread Overview 数据
+            reply_summary: Reply 的 AI 摘要（可选）
+            reply_author: 回复者名称
+            reply_author_email: 回复者邮箱
+            reply_date: 回复日期字符串
+            reply_url: 回复在 lore.kernel.org 上的链接
+            reply_content: 回复的原始内容（用于 fallback 摘要）
 
         Returns:
             成功返回 True，失败返回 False
@@ -133,7 +153,13 @@ class MultiPlatformThreadSender:  # pylint: disable=too-few-public-methods
         # 2) Feishu：发送 Thread 更新通知卡片
         try:
             feishu_rendered = self.feishu_renderer.render_update_notification(
-                overview_data
+                overview_data,
+                reply_summary=reply_summary,
+                reply_author=reply_author,
+                reply_author_email=reply_author_email,
+                reply_date=reply_date,
+                reply_url=reply_url,
+                reply_content=reply_content,
             )
             await self.feishu_client.update_thread_overview("", "", feishu_rendered)
         except Exception as e:  # pylint: disable=broad-except
@@ -142,7 +168,16 @@ class MultiPlatformThreadSender:  # pylint: disable=too-few-public-methods
         return success
 
     async def send_thread_update_notification(
-        self, channel_id: str, thread_id: str, platform_message_id: Optional[str] = None
+        self,
+        channel_id: str,
+        thread_id: str,
+        platform_message_id: Optional[str] = None,
+        reply_author: str = "",
+        reply_author_email: str = "",
+        reply_date: str = "",
+        reply_summary: str = "",
+        reply_url: str = "",
+        reply_content: str = "",
     ) -> bool:
         """发送 Thread 更新通知
 
@@ -150,11 +185,25 @@ class MultiPlatformThreadSender:  # pylint: disable=too-few-public-methods
             channel_id: 频道 ID
             thread_id: Thread ID
             platform_message_id: Patch Card 消息 ID（可选）
+            reply_author: 回复者名称
+            reply_author_email: 回复者邮箱
+            reply_date: 回复日期字符串
+            reply_summary: 回复的 AI 摘要
+            reply_url: 回复在 lore.kernel.org 上的链接
+            reply_content: 回复的原始内容（用于 fallback 摘要）
 
         Returns:
             成功返回 True，失败返回 False
         """
         # 只由 Discord 发送（Feishu 不支持）
         return await self.discord_client.send_thread_update_notification(
-            channel_id, thread_id, platform_message_id
+            channel_id,
+            thread_id,
+            platform_message_id,
+            reply_author=reply_author,
+            reply_author_email=reply_author_email,
+            reply_date=reply_date,
+            reply_summary=reply_summary,
+            reply_url=reply_url,
+            reply_content=reply_content,
         )

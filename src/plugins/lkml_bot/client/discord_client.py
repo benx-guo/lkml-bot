@@ -7,6 +7,8 @@
 Discord 的唯一客户端实例使用。
 """
 
+# pylint: disable=too-many-lines
+
 import asyncio
 from typing import Dict, List, Optional, Tuple
 
@@ -27,14 +29,7 @@ DISCORD_CONTENT_MAX_LENGTH = 2000
 
 
 def truncate_description(description: str) -> str:
-    """截断描述以符合 Discord embed 限制
-
-    Args:
-        description: 原始描述
-
-    Returns:
-        截断后的描述
-    """
+    """截断描述以符合 Discord embed 限制"""
     if len(description) > DISCORD_EMBED_DESCRIPTION_MAX_LENGTH:
         logger.warning(
             f"Description too long ({len(description)} chars), truncating to {DISCORD_EMBED_DESCRIPTION_MAX_LENGTH}"
@@ -633,23 +628,19 @@ async def check_thread_exists(config, thread_id: str) -> bool:
         return False
 
 
-async def send_thread_update_notification(
+async def send_thread_update_notification(  # pylint: disable=too-many-arguments,too-many-locals
     config,
     channel_id: str,
     thread_id: str,
     platform_message_id: Optional[str] = None,  # pylint: disable=unused-argument
+    reply_author: str = "",
+    reply_author_email: str = "",
+    reply_date: str = "",
+    reply_summary: str = "",
+    reply_url: str = "",
+    reply_content: str = "",
 ) -> bool:
-    """发送 Thread 更新通知到频道
-
-    Args:
-        config: 配置对象
-        channel_id: 频道 ID
-        thread_id: Thread ID
-        platform_message_id: Patch Card 的消息 ID（用于构建 Thread 链接）
-
-    Returns:
-        成功返回 True，失败返回 False
-    """
+    """发送 Thread 更新通知到频道（embed 格式，包含回复者和摘要信息）"""
     try:
         if not config.discord_bot_token:
             logger.error("Discord bot token not configured")
@@ -660,13 +651,39 @@ async def send_thread_update_notification(
             "Content-Type": "application/json",
         }
 
-        # 使用 Thread 提及格式 <#{thread_id}>
-        thread_mention = f"Thread: <#{thread_id}>"
+        from ..renders.helpers import build_author_display, build_content_excerpt
 
-        # 构建通知消息
-        content = f"🔄 **Thread Overview 已更新**\n\n{thread_mention}\n\n"
+        # content: thread 提及（embed 内不支持 channel mention）
+        content = f"Thread: <#{thread_id}>"
 
-        message_data = {"content": content}
+        # 构建 embed description
+        desc_lines = []
+
+        # From / Date 行
+        if reply_author:
+            author_display = build_author_display(reply_author, reply_author_email)
+            desc_lines.append(f"**From:** {author_display}")
+        if reply_date:
+            desc_lines.append(f"**Date:** {reply_date}")
+
+        # 摘要优先用 AI summary，fallback 到 content excerpt
+        summary_text = reply_summary
+        if not summary_text and reply_content:
+            summary_text = build_content_excerpt(reply_content, quote_prefix="")
+        if summary_text:
+            desc_lines.append(f"\n> {summary_text}")
+
+        # reply URL 链接
+        if reply_url:
+            desc_lines.append(f"\n🔗 [View Reply]({reply_url})")
+
+        embed = {
+            "title": "💬 New Reply",
+            "description": "\n".join(desc_lines),
+            "color": 0x5865F2,
+        }
+
+        message_data = {"content": content, "embeds": [embed]}
 
         async with httpx.AsyncClient() as client:
             response = await client.post(
@@ -703,18 +720,7 @@ async def send_message_to_thread(
     embed: Optional[Dict] = None,
     max_retries: int = 3,
 ) -> Optional[str]:
-    """发送消息到 Thread（带 rate limit 处理）
-
-    Args:
-        config: 配置对象
-        thread_id: Thread ID
-        content: 消息内容
-        embed: 可选的 embed 字典
-        max_retries: 遇到 429 时的最大重试次数
-
-    Returns:
-        成功返回消息 ID，失败返回 None
-    """
+    """发送消息到 Thread（带 rate limit 处理）"""
     try:
         if not config.discord_bot_token:
             logger.error("Discord bot token not configured")
@@ -988,9 +994,27 @@ class DiscordClient(
         )
 
     async def send_thread_update_notification(
-        self, channel_id: str, thread_id: str, platform_message_id: Optional[str] = None
+        self,
+        channel_id: str,
+        thread_id: str,
+        platform_message_id: Optional[str] = None,
+        reply_author: str = "",
+        reply_author_email: str = "",
+        reply_date: str = "",
+        reply_summary: str = "",
+        reply_url: str = "",
+        reply_content: str = "",
     ) -> bool:
         """发送 Thread 更新通知到频道"""
         return await send_thread_update_notification(
-            self.config, channel_id, thread_id, platform_message_id
+            self.config,
+            channel_id,
+            thread_id,
+            platform_message_id,
+            reply_author=reply_author,
+            reply_author_email=reply_author_email,
+            reply_date=reply_date,
+            reply_summary=reply_summary,
+            reply_url=reply_url,
+            reply_content=reply_content,
         )

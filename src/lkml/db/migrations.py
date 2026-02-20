@@ -7,6 +7,7 @@ import logging
 from pathlib import Path
 from typing import List, Optional
 from sqlalchemy import text
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 logger = logging.getLogger(__name__)
@@ -139,7 +140,7 @@ class MigrationRunner:
                     if statement:
                         try:
                             await conn.execute(text(statement))
-                        except (RuntimeError, ValueError) as e:
+                        except (RuntimeError, ValueError, OperationalError) as e:
                             # 某些语句可能因为已存在而失败（如 CREATE INDEX IF NOT EXISTS）
                             # 或者因为不存在而失败（如 DROP COLUMN 时列已不存在）
                             # 检查是否是"已存在"或"不存在"的错误
@@ -160,7 +161,13 @@ class MigrationRunner:
             logger.info(f"Migration {version} applied successfully")
             return True
 
-        except (RuntimeError, ValueError, AttributeError, IOError) as e:
+        except (
+            RuntimeError,
+            ValueError,
+            AttributeError,
+            IOError,
+            OperationalError,
+        ) as e:
             logger.error(f"Failed to execute migration {version}: {e}", exc_info=True)
             return False
 

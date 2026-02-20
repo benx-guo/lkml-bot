@@ -127,10 +127,18 @@ async def send_update_callback(subsystem: str, update_data):
 # 创建 FeedMessageService（使用统一的多平台发送服务）
 # pylint: disable=wrong-import-position,wrong-import-order
 from lkml.service.feed_message_service import FeedMessageService
+from lkml.service.summarizer import ContentSummarizer
+
+content_summarizer = (  # pylint: disable=invalid-name
+    ContentSummarizer(plugin_config.gemini_api_key)
+    if plugin_config.gemini_api_key
+    else None
+)
 
 feed_message_service = FeedMessageService(
     patch_card_sender=patch_card_sender,
     thread_sender=thread_sender,
+    summarizer=content_summarizer,
 )
 
 processor = FeedProcessor(

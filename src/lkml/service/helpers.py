@@ -41,6 +41,7 @@ def extract_common_patch_card_fields(data: Any) -> Dict[str, Any]:
         "patch_total": data.patch_total,
         "has_thread": getattr(data, "has_thread", False),
         "to_cc_list": getattr(data, "to_cc_list", None),
+        "summary": getattr(data, "summary", None),
         # 注意：is_cover_letter 不在数据库中存储，只在 Service 层使用
     }
 

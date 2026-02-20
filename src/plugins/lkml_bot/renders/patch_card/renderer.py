@@ -7,6 +7,7 @@ Plugins 层渲染器：只负责将 PatchCard 渲染成 Discord 格式。
 from lkml.service import PatchCard
 
 from ...client.discord_params import PatchCardParams
+from ..helpers import build_author_display, build_cc_summary, build_content_excerpt
 from ..types import DiscordRenderedPatchCard
 
 
@@ -54,7 +55,7 @@ class PatchCardRenderer:
             message_id_header=patch_card.message_id_header,
             subject=patch_card.subject,
             author=patch_card.author,
-            received_at=patch_card.expires_at,  # FIXME: 应该用 received_at
+            received_at=patch_card.received_at or patch_card.expires_at,
             url=patch_card.url,
             series_message_id=patch_card.series_message_id,
             patch_version=patch_card.patch_version,
@@ -72,7 +73,9 @@ class PatchCardRenderer:
             title=title,
         )
 
-    def _build_description(self, patch_card: PatchCard) -> str:
+    def _build_description(  # pylint: disable=too-many-branches
+        self, patch_card: PatchCard
+    ) -> str:
         """构建 Embed 描述（纯渲染逻辑）
 
         Args:
@@ -86,9 +89,16 @@ class PatchCardRenderer:
         # 基本信息（YAML 格式）
         lines.append("```yaml")
         lines.append(f"Subsystem: {patch_card.subsystem_name}")
-        if patch_card.expires_at:
-            lines.append(f"Date: {patch_card.expires_at.strftime('%Y-%m-%d %H:%M:%S')}")
-        lines.append(f"Author: {patch_card.author}")
+        date_value = patch_card.received_at or patch_card.expires_at
+        if date_value:
+            lines.append(f"Date: {date_value.strftime('%Y-%m-%d %H:%M:%S')}")
+
+        author_str = build_author_display(patch_card.author, patch_card.author_email)
+        lines.append(f"Author: {author_str}")
+
+        # Version（有时才显示）
+        if patch_card.patch_version:
+            lines.append(f"Version: {patch_card.patch_version}")
 
         # 如果是系列，显示总数和已接收数
         if patch_card.is_series_patch and patch_card.patch_total:
@@ -99,6 +109,25 @@ class PatchCardRenderer:
             lines.append(f"Received: {received}/{patch_card.patch_total}")
 
         lines.append("```")
+
+        # Content excerpt（优先使用 AI 摘要，fallback 到规则截断）
+        if patch_card.summary:
+            lines.append(f"> {patch_card.summary}")
+        elif patch_card.content:
+            excerpt = build_content_excerpt(patch_card.content)
+            if excerpt:
+                lines.append(excerpt)
+
+        # CC 列表（缩略显示）
+        if patch_card.to_cc_list:
+            cc_str = build_cc_summary(patch_card.to_cc_list)
+            if cc_str:
+                lines.append(cc_str)
+
+        # 匹配的 filter 名称
+        if patch_card.matched_filters:
+            filters_str = ", ".join(patch_card.matched_filters)
+            lines.append(f"**Matched Filters:** {filters_str}")
 
         # 系列 PATCH 列表
         if patch_card.series_patches:
@@ -130,61 +159,68 @@ class PatchCardRenderer:
 
         Args:
             payload: Reply 通知数据
-                - reply_author: 回复作者
-                - reply_subject: 回复主题
-                - reply_url: 回复链接
-                - root_subject: 根 Patch 主题
-                - root_url: 根 Patch 链接
 
         Returns:
             DiscordRenderedReplyNotification 渲染结果
         """
         from ..types import DiscordRenderedReplyNotification
 
-        reply_author = payload.get("reply_author") or "unknown"
+        title = self._build_reply_title(payload)
+        description = self._build_reply_description(payload)
+
+        return DiscordRenderedReplyNotification(
+            title=title,
+            description=description,
+            url=payload.get("reply_url"),
+            embed_color=0x5865F2,
+        )
+
+    def _build_reply_title(self, payload: dict) -> str:
+        """构建 Reply 通知标题"""
         reply_subject = payload.get("reply_subject") or ""
-        reply_url = payload.get("reply_url")
+        reply_author = payload.get("reply_author") or "unknown"
+        if reply_subject:
+            return f"\U0001f4ac {reply_subject}"
+        return f"\U0001f4ac [Reply from {reply_author}]"
+
+    def _build_reply_description(self, payload: dict) -> str:
+        """构建 Reply 通知描述"""
+        reply_author = payload.get("reply_author") or "unknown"
+        reply_author_name = payload.get("reply_author_name") or ""
         reply_subsystem = payload.get("reply_subsystem") or ""
         reply_date = payload.get("reply_date") or ""
+        reply_content = payload.get("reply_content") or ""
         root_subject = payload.get("root_subject") or ""
         root_url = payload.get("root_url")
 
-        # 标题（使用 subject 名称，可点击链接）
-        if reply_subject:
-            title = reply_subject
-        else:
-            title = f"[Reply from {reply_author}]"
+        author_display = build_author_display(reply_author_name, reply_author)
 
         lines = []
 
-        # 信息框（YAML 格式，只显示 Subsystem、Date、Author - 都是 reply 的信息）
+        # 信息框（YAML 格式）
         lines.append("```yaml")
         if reply_subsystem:
             lines.append(f"Subsystem: {reply_subsystem}")
         if reply_date:
             lines.append(f"Date: {reply_date}")
-        lines.append(f"Author: {reply_author}")
+        lines.append(f"Author: {author_display}")
         lines.append("```")
 
-        # Reply Subject 和 Root Patch 显示在 YAML 模块外（换行显示）
-        if reply_subject:
-            lines.append("Reply Subject:")
-            if reply_url:
-                lines.append(f"[{reply_subject}]({reply_url})")
-            else:
-                lines.append(reply_subject)
+        # Reply content（优先使用 AI 摘要，fallback 到规则截断）
+        reply_summary = payload.get("reply_summary")
+        if reply_summary:
+            lines.append(f"> {reply_summary}")
+        elif reply_content:
+            excerpt = build_content_excerpt(reply_content)
+            if excerpt:
+                lines.append(excerpt)
+
+        # In reply to（措辞优化）
         if root_subject:
-            lines.append("Root Patch:")
+            lines.append("**In reply to:**")
             if root_url:
                 lines.append(f"[{root_subject}]({root_url})")
             else:
                 lines.append(root_subject)
 
-        description = "\n".join(lines)
-
-        return DiscordRenderedReplyNotification(
-            title=title,
-            description=description,
-            url=reply_url,
-            embed_color=0x5865F2,  # 蓝色（参考第一张图）
-        )
+        return "\n".join(lines)

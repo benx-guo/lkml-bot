@@ -2,6 +2,7 @@
 
 from lkml.service import PatchCard
 
+from ..helpers import build_author_display, build_cc_summary, build_content_excerpt
 from ..types import FeishuRenderedPatchCard
 
 
@@ -21,12 +22,6 @@ class FeishuPatchCardRenderer:  # pylint: disable=too-few-public-methods
             FeishuRenderedPatchCard 渲染结果
         """
         header_title = patch_card.subject[:200]
-        date_str = (
-            patch_card.expires_at.strftime("%Y-%m-%d %H:%M UTC")
-            if patch_card.expires_at
-            else ""
-        )
-        author_str = patch_card.author or "Unknown"
 
         # 是否为系列 PATCH（Single Patch 时不显示 Series 信息）
         is_series = bool(
@@ -39,20 +34,7 @@ class FeishuPatchCardRenderer:  # pylint: disable=too-few-public-methods
             patch_card, is_series
         )
 
-        # 基础信息（Single Patch / Series 共用）
-        base_content_lines = [
-            f"• **Subsystem** ：{patch_card.subsystem_name}",
-            f"• **Date** ：{date_str}",
-            f"• **Author** ：{author_str}",
-        ]
-
-        # 只有系列 PATCH 时才显示统计信息
-        if is_series:
-            total_patches = patch_card.patch_total or 0
-            base_content_lines.append(f"• **Total Patches** ：{total_patches}")
-            base_content_lines.append(f"• **Received** ：{received}/{total_patches}")
-
-        base_content = "\n".join(base_content_lines)
+        base_content = self._build_base_content(patch_card, is_series, received)
 
         card = {
             "msg_type": "interactive",
@@ -111,6 +93,38 @@ class FeishuPatchCardRenderer:  # pylint: disable=too-few-public-methods
                 "margin": "0px 0px 0px 0px",
             }
         ]
+
+        # Content excerpt（优先使用 AI 摘要，fallback 到规则截断）
+        content_text = None
+        if patch_card.summary:
+            content_text = f"> {patch_card.summary}"
+        elif patch_card.content:
+            content_text = build_content_excerpt(patch_card.content)
+
+        if content_text:
+            elements.append(
+                {
+                    "tag": "div",
+                    "text": {
+                        "tag": "lark_md",
+                        "content": content_text,
+                    },
+                }
+            )
+
+        # CC 列表
+        if patch_card.to_cc_list:
+            cc_str = build_cc_summary(patch_card.to_cc_list)
+            if cc_str:
+                elements.append(
+                    {
+                        "tag": "div",
+                        "text": {
+                            "tag": "lark_md",
+                            "content": cc_str,
+                        },
+                    }
+                )
 
         # 只有系列 PATCH 时才添加 Series 模块
         if is_series and subpatch_md:
@@ -171,6 +185,30 @@ class FeishuPatchCardRenderer:  # pylint: disable=too-few-public-methods
 
         return FeishuRenderedPatchCard(card=card)
 
+    @staticmethod
+    def _build_base_content(
+        patch_card: PatchCard, is_series: bool, received: int
+    ) -> str:
+        """构建基础信息 Markdown 内容"""
+        date_value = patch_card.received_at or patch_card.expires_at
+        date_str = date_value.strftime("%Y-%m-%d %H:%M UTC") if date_value else ""
+
+        author_str = build_author_display(patch_card.author, patch_card.author_email)
+
+        lines = [
+            f"• **Subsystem** ：{patch_card.subsystem_name}",
+            f"• **Date** ：{date_str}",
+            f"• **Author** ：{author_str}",
+        ]
+        if patch_card.patch_version:
+            lines.append(f"• **Version** ：{patch_card.patch_version}")
+        if is_series:
+            total_patches = patch_card.patch_total or 0
+            lines.append(f"• **Total Patches** ：{total_patches}")
+            lines.append(f"• **Received** ：{received}/{total_patches}")
+
+        return "\n".join(lines)
+
     def _build_series_markdown_and_received(
         self, patch_card: PatchCard, is_series: bool
     ) -> tuple[str, int]:
@@ -224,13 +262,16 @@ class FeishuPatchCardRenderer:  # pylint: disable=too-few-public-methods
         """构建 Reply 通知的基础信息内容"""
         reply_subsystem = payload.get("reply_subsystem") or ""
         reply_date = payload.get("reply_date") or ""
+        reply_author_name = payload.get("reply_author_name") or ""
+
+        author_display = build_author_display(reply_author_name, reply_author)
 
         base_content_lines = []
         if reply_subsystem:
             base_content_lines.append(f"• **Subsystem** ：{reply_subsystem}")
         if reply_date:
             base_content_lines.append(f"• **Date** ：{reply_date}")
-        base_content_lines.append(f"• **Author** ：{reply_author}")
+        base_content_lines.append(f"• **Author** ：{author_display}")
 
         return "\n".join(base_content_lines)
 
@@ -238,6 +279,7 @@ class FeishuPatchCardRenderer:  # pylint: disable=too-few-public-methods
         """构建 Reply 通知的卡片元素列表"""
         reply_subject = payload.get("reply_subject") or ""
         reply_url = payload.get("reply_url")
+        reply_content = payload.get("reply_content") or ""
         root_subject = payload.get("root_subject") or ""
         root_url = payload.get("root_url")
 
@@ -271,7 +313,26 @@ class FeishuPatchCardRenderer:  # pylint: disable=too-few-public-methods
             }
         ]
 
-        # Reply Subject 和 Root Patch 显示在单独的区域
+        # Reply content（优先使用 AI 摘要，fallback 到规则截断）
+        reply_summary = payload.get("reply_summary")
+        content_text = None
+        if reply_summary:
+            content_text = f"> {reply_summary}"
+        elif reply_content:
+            content_text = build_content_excerpt(reply_content)
+
+        if content_text:
+            elements.append(
+                {
+                    "tag": "div",
+                    "text": {
+                        "tag": "lark_md",
+                        "content": content_text,
+                    },
+                }
+            )
+
+        # Reply Subject 和 Root Patch 显示在单独的区域（措辞优化）
         if reply_subject:
             reply_subject_content = (
                 f"[{reply_subject}]({reply_url})" if reply_url else reply_subject
@@ -295,7 +356,7 @@ class FeishuPatchCardRenderer:  # pylint: disable=too-few-public-methods
                     "tag": "div",
                     "text": {
                         "tag": "lark_md",
-                        "content": f"**Root Patch:**\n{root_patch_content}",
+                        "content": f"**In reply to:**\n{root_patch_content}",
                     },
                 }
             )
