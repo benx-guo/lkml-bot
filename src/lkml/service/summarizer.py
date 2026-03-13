@@ -5,11 +5,36 @@
 """
 
 import logging
+import re
 from typing import Optional
 
 import httpx
 
 logger = logging.getLogger(__name__)
+
+
+def _strip_quoted_lines(content: str) -> str:
+    """剥离邮件引用行，只保留发件人自己写的内容。
+
+    处理纯文本引用（> 开头）和 HTML 实体引用（&gt; 开头）。
+    同时去除常见的邮件签名分隔符（-- ）之后的内容。
+    """
+    lines = content.splitlines()
+    own_lines: list[str] = []
+    for line in lines:
+        stripped = line.strip()
+        # 跳过引用行
+        if stripped.startswith(">") or stripped.startswith("&gt;"):
+            continue
+        # 遇到签名分隔符停止
+        if stripped in ("-- ", "--"):
+            break
+        # 跳过常见的引用头（如 "On ... wrote:"）
+        if re.match(r"^On .+ wrote:\s*$", stripped):
+            continue
+        own_lines.append(line)
+    result = "\n".join(own_lines).strip()
+    return result
 
 
 class ContentSummarizer:
@@ -31,14 +56,20 @@ class ContentSummarizer:
         if not self.api_key or not content:
             return None
 
-        truncated = content[: self.MAX_CONTENT_CHARS]
         if is_reply:
+            # 剥离引用内容，只保留发件人自己写的新内容
+            own_content = _strip_quoted_lines(content)
+            if not own_content:
+                own_content = content  # fallback: 无法分离时用原文
+            truncated = own_content[: self.MAX_CONTENT_CHARS]
             prompt = (
                 "Summarize this Linux kernel mailing list reply in one concise "
-                "sentence (in Chinese). Focus on the reviewer's opinion or feedback. "
+                "sentence (in Chinese). Focus ONLY on the reviewer's own words "
+                "(ignore any quoted text from previous emails). "
                 f"Title: {subject}\nContent:\n{truncated}"
             )
         else:
+            truncated = content[: self.MAX_CONTENT_CHARS]
             prompt = (
                 "Summarize this Linux kernel patch in one concise sentence "
                 f"(in Chinese). Title: {subject}\nContent:\n{truncated}"
