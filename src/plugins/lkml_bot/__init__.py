@@ -130,7 +130,10 @@ from lkml.service.feed_message_service import FeedMessageService
 from lkml.service.summarizer import ContentSummarizer
 
 content_summarizer = (  # pylint: disable=invalid-name
-    ContentSummarizer(plugin_config.gemini_api_key)
+    ContentSummarizer(
+        plugin_config.gemini_api_key,
+        base_url=plugin_config.gemini_base_url or "",
+    )
     if plugin_config.gemini_api_key
     else None
 )
