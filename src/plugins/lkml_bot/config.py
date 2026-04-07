@@ -56,6 +56,7 @@ class PluginConfig(BaseLKMLConfig):
             monitoring_interval=base_config.monitoring_interval,
             last_update_dt_override_iso=base_config.last_update_dt_override_iso,
             gemini_api_key=base_config.gemini_api_key,
+            gemini_base_url=base_config.gemini_base_url,
             discord_webhook_url=discord_webhook_url,
             discord_bot_token=discord_bot_token,
             platform_channel_id=platform_channel_id,

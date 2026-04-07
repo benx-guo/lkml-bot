@@ -40,14 +40,22 @@ def _strip_quoted_lines(content: str) -> str:
 class ContentSummarizer:
     """可选的 AI 内容摘要服务（Gemini Flash-Lite）"""
 
-    ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+    DEFAULT_BASE_URL = "https://generativelanguage.googleapis.com"
+    ENDPOINT_PATH = "/v1beta/models/{model}:generateContent"
     DEFAULT_MODEL = "gemini-2.5-flash-lite"
     TIMEOUT = 15.0
     MAX_CONTENT_CHARS = 1000
 
-    def __init__(self, api_key: str, model: str = DEFAULT_MODEL):
+    def __init__(self, api_key: str, model: str = DEFAULT_MODEL, base_url: str = ""):
         self.api_key = api_key
         self.model = model
+        self.base_url = base_url.rstrip("/") if base_url else self.DEFAULT_BASE_URL
+        logger.info(
+            "ContentSummarizer initialized, model=%s, base_url=%s, key=%s***",
+            model,
+            self.base_url,
+            api_key[:8] if api_key else "<empty>",
+        )
 
     async def summarize(
         self, content: str, subject: str, is_reply: bool = False
@@ -75,7 +83,7 @@ class ContentSummarizer:
                 f"(in Chinese). Title: {subject}\nContent:\n{truncated}"
             )
 
-        url = self.ENDPOINT.format(model=self.model)
+        url = self.base_url + self.ENDPOINT_PATH.format(model=self.model)
         body = {"contents": [{"parts": [{"text": prompt}]}]}
 
         try:

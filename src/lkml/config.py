@@ -102,6 +102,7 @@ class LKMLConfig(BaseModel):
     database_url: str = "sqlite+aiosqlite:///./lkml_bot.db"
     manual_subsystems: List[str] = []  # 手动配置的额外子系统
     gemini_api_key: str = ""  # Gemini API Key（用于内容摘要）
+    gemini_base_url: str = ""  # Gemini API 代理地址（留空则用官方端点）
     max_news_count: int = 20
     monitoring_interval: int = 300  # 监控任务执行周期（秒），默认 5 分钟
     # Debug/开发辅助：ISO8601 字符串覆盖 last_update_dt（如 2025-11-03T12:00:00Z）
@@ -227,6 +228,7 @@ class LKMLConfig(BaseModel):
         )
         last_update_dt_override_iso = cls._get_str_env("LKML_LAST_UPDATE_AT")
         gemini_api_key = cls._get_str_env("LKML_GEMINI_API_KEY", "")
+        gemini_base_url = cls._get_str_env("LKML_GEMINI_BASE_URL", "")
 
         # 构建配置字典
         config_dict = {"manual_subsystems": manual_subsystems}
@@ -240,5 +242,7 @@ class LKMLConfig(BaseModel):
             config_dict["last_update_dt_override_iso"] = last_update_dt_override_iso
         if gemini_api_key:
             config_dict["gemini_api_key"] = gemini_api_key
+        if gemini_base_url:
+            config_dict["gemini_base_url"] = gemini_base_url
 
         return cls(**config_dict)
